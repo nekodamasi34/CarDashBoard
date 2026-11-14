@@ -119,7 +119,7 @@ private fun DashboardScreen(controller: ObdController) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.3", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.3.1", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
@@ -131,8 +131,9 @@ private fun DashboardScreen(controller: ObdController) {
             OutlinedButton(onClick = { page = 1 }) { Text("通信ベンチマーク") }
         }
         OutlinedButton(onClick = { page = 2 }) { Text("CANモニター") }
+        OutlinedButton(onClick = { page = 3 }) { Text("アダプター診断") }
         if (data.communication == CommunicationMode.CAN) Text("CANデコードは未検証の参考値です", color = Accent)
-        if (page == 2) { CanPane(data, controller) } else if (page == 1) {
+        if (page == 3) { DiagnosticPane(data, controller) } else if (page == 2) { CanPane(data, controller) } else if (page == 1) {
             BenchmarkPane(data, controller)
         } else {
             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -325,7 +326,7 @@ private fun CanPane(data: DashboardState, controller: ObdController) {
     Text("CAN直接監視（実験・VP11実機未確認）", color = Accent)
     Text("停車中・IG ON・エンジン停止で初回確認。長時間測定はバッテリー消耗に注意。", color = Muted)
     Button(onClick = { controller.selectCommunication(CommunicationMode.CAN) },
-        enabled = data.communication != CommunicationMode.CAN) { Text("CAN選択・監視開始") }
+        enabled = data.communication != CommunicationMode.CAN && !data.diagnostic.running) { Text("CAN安全条件を確認") }
     OutlinedButton(onClick = { controller.selectCommunication(CommunicationMode.OBD) },
         enabled = data.communication == CommunicationMode.CAN) { Text("監視停止・通常OBD2へ") }
     Text("選択: ${data.communication} / ${data.status}\n未接続の場合は下の機器一覧から接続してください。", color = Muted)
