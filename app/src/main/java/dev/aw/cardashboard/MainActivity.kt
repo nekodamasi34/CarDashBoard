@@ -136,8 +136,12 @@ private fun DashboardScreen(controller: ObdController) {
                     Text("0", color = Muted, fontSize = 11.sp)
                     Text("9,000 rpm", color = Muted, fontSize = 11.sp)
                 }
-                Text("取得頻度  " + (data.rpmHz?.let { String.format(Locale.US, "%.1f Hz", it) } ?: "-- Hz"),
+                Text(if (data.demo) "デモ更新: 約20 Hz（実測ではありません）" else "取得頻度  " + (data.rpmHz?.let { String.format(Locale.US, "%.1f Hz", it) } ?: "-- Hz"),
                     color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(if (data.demo) "RPM応答時間: --（デモ）" else
+                    "RPM応答時間: " + (data.rpmResponseMs?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--") +
+                    " / 平均: " + (data.rpmAverageMs?.let { String.format(Locale.US, "%.0f ms", it) } ?: "--"),
+                    color = Muted, fontSize = 12.sp)
             }
         }
 
@@ -169,7 +173,7 @@ private fun DashboardScreen(controller: ObdController) {
                     data.devices.forEach { device ->
                         OutlinedButton(
                             onClick = { controller.connect(device.address) },
-                            enabled = !data.connected && !data.status.startsWith("Bluetooth接続中"),
+                            enabled = !data.busy && !data.connected,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
