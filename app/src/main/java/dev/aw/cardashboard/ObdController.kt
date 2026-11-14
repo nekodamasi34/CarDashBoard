@@ -21,11 +21,18 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
+
 import kotlin.math.sin
 
 data class PairedDevice(val name: String, val address: String)
 data class DashboardState(
+    val mode: PollingMode = PollingMode.RPM_PRIORITY,
+    val timing: AdaptiveTiming = AdaptiveTiming.ATAT1,
+    val appliedMode: PollingMode? = null,
+    val timingRevision: Long = 0,
+    val appliedTiming: AdaptiveTiming? = null,
+    val settingError: String? = null,
+    val benchmark: BenchmarkView = BenchmarkView(),
     val status: String = "未接続",
     val connected: Boolean = false,
     val bluetoothConnected: Boolean = false,
@@ -45,9 +52,41 @@ class ObdController(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(DashboardState())
     val state: StateFlow<DashboardState> = _state
+    private val lock = Any()
+    private val benchmarks = BenchmarkManager()
+    init {
+        scope.launch(Dispatchers.Default) {
+            while (isActive) {
+                delay(250)
+                synchronized(lock) {
+                    val view = benchmarks.snapshot(SystemClock.elapsedRealtimeNanos())
+                    _state.update { it.copy(benchmark = view,
+                        rpmHz = if (it.connected) view.live.rpmHz.toFloat() else null,
+                        rpmResponseMs = view.live.latestMs?.toFloat(),
+                        rpmAverageMs = view.live.meanMs?.toFloat()) }
+                }
+            }
+        }
+    }
+    fun selectMode(mode: PollingMode) = synchronized(lock) {
+        if (!benchmarks.isRunning()) {
+            _state.update { it.copy(mode = mode, appliedMode = null) }
+        }
+    }
+    fun selectTiming(timing: AdaptiveTiming) = synchronized(lock) {
+        if (!benchmarks.isRunning()) _state.update { it.copy(timing = timing, timingRevision = it.timingRevision + 1, appliedTiming = null, settingError = null) }
+    }
+    fun startBenchmark() = synchronized(lock) {
+        val value = _state.value
+        if (value.connected && !value.demo && value.appliedTiming == value.timing && value.appliedMode == value.mode)
+            benchmarks.start(SystemClock.elapsedRealtimeNanos(), value.mode, value.timing)
+    }
+    fun stopBenchmark() = synchronized(lock) { benchmarks.stop(SystemClock.elapsedRealtimeNanos()) }
+    private fun fresh(old: DashboardState, status: String = "未接続", busy: Boolean = false) =
+        old.resetConnection(benchmarks.snapshot(SystemClock.elapsedRealtimeNanos())).copy(status = status, busy = busy)
     private val sppUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private val timeFormat = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.JAPAN)
-    private val lock = Any()
+
     private var socket: BluetoothSocket? = null
     private var operation: Job? = null
     @Volatile private var session = 0
@@ -84,6 +123,7 @@ class ObdController(private val context: Context) {
     }
 
     private fun stopCurrent() = synchronized(lock) {
+        benchmarks.disconnected(SystemClock.elapsedRealtimeNanos())
         session++
         operation?.cancel()
         operation = null
@@ -93,15 +133,14 @@ class ObdController(private val context: Context) {
 
     fun disconnect() {
         stopCurrent()
-        _state.update { DashboardState(devices = it.devices, logs = it.logs) }
+        _state.update { fresh(it) }
         log("手動切断（再接続しません）")
     }
 
     fun startDemo() {
         stopCurrent()
         val id = session
-        _state.update { DashboardState(status = "デモモード（実車ではない）", demo = true,
-            devices = it.devices, logs = it.logs, rpm = 1200f, speedKmh = 0, coolantC = 80) }
+        _state.update { fresh(it).copy(status = "デモモード（実車ではない）", demo = true, rpm = 1200f, speedKmh = 0, coolantC = 80) }
         log("デモモード開始")
         operation = scope.launch {
             val start = SystemClock.elapsedRealtime()
@@ -121,13 +160,11 @@ class ObdController(private val context: Context) {
         stopCurrent()
         val id = session
         if (!hasConnectPermission()) {
-            _state.update { DashboardState(status = "接続エラー: Bluetooth接続権限が必要です",
-                devices = it.devices, logs = it.logs) }
+            _state.update { fresh(it, "接続エラー: Bluetooth接続権限が必要です") }
             log("Bluetooth接続権限が必要です")
             return
         }
-        _state.update { DashboardState(status = "Bluetooth接続中…", busy = true,
-            devices = it.devices, logs = it.logs) }
+        _state.update { fresh(it, "Bluetooth接続中…", true) }
         log("接続開始: $address")
         operation = scope.launch(Dispatchers.IO) {
             for (attempt in 1..3) {
@@ -141,7 +178,8 @@ class ObdController(private val context: Context) {
                 } catch (e: Exception) {
                     val reason = e.message ?: e.javaClass.simpleName
                     sessionLog(id, "通信失敗 ($attempt/3): $reason")
-                    publish(id) { DashboardState(devices = it.devices, logs = it.logs,
+                    synchronized(lock) { if (id == session) benchmarks.disconnected(SystemClock.elapsedRealtimeNanos()) }
+                    publish(id) { fresh(it,
                         busy = attempt < 3, status = if (attempt < 3)
                             "再試行中 ($attempt/3): $reason" else "接続エラー: $reason") }
                     if (attempt < 3) delay(1000)
@@ -163,8 +201,8 @@ class ObdController(private val context: Context) {
             socket = local
         }
         var reader: Job? = null
-        var monitor: Job? = null
-        val replies = Channel<String>(8)
+
+        val replies = Channel<Reply>(8)
         try {
             publish(id) { it.copy(status = "Bluetooth接続中…") }
             val connectExpired = AtomicBoolean(false)
@@ -184,19 +222,14 @@ class ObdController(private val context: Context) {
             publish(id) { it.copy(bluetoothConnected = true, status = "ELM327初期化中…") }
             reader = launch(Dispatchers.IO) { readPrompts(local.inputStream, replies) }
             val output = local.outputStream
-            var lastCommandMs = 0f
-            val timestamps = ArrayDeque<Long>()
-            val durations = ArrayDeque<Float>()
-            val lastRpm = AtomicLong(0L)
-            fun clearMetrics() {
-                timestamps.clear()
-                durations.clear()
-                publish(id) { it.copy(rpmHz = null, rpmResponseMs = null, rpmAverageMs = null) }
-            }
             suspend fun command(text: String, timeoutMs: Long): String {
                 ensureActive()
                 if (replies.tryReceive().isSuccess) throw IOException("予期しない終端 >（同期ずれ）")
                 val started = SystemClock.elapsedRealtimeNanos()
+                val pid = Pid.entries.firstOrNull { it.command == text }
+                fun record(end: Long, success: Boolean, timeout: Boolean = false) = synchronized(lock) {
+                    if (id == session && pid != null) benchmarks.record(RequestSample(pid, started, end, success, timeout))
+                }
                 val expired = AtomicBoolean(false)
                 val writeGuard = launch {
                     delay(timeoutMs)
@@ -209,13 +242,21 @@ class ObdController(private val context: Context) {
                         output.flush()
                         replies.receive()
                     }
-                    lastCommandMs = (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000f
-                    return raw
+                    val valid = when (pid) {
+                        Pid.RPM -> ObdParser.rpm(raw.text) != null
+                        Pid.SPEED -> ObdParser.speedKmh(raw.text) != null
+                        Pid.COOLANT -> ObdParser.coolantC(raw.text) != null
+                        null -> false
+                    }
+                    record(raw.completedNs, valid)
+                    return raw.text
                 } catch (e: TimeoutCancellationException) {
+                    record(SystemClock.elapsedRealtimeNanos(), false, true)
                     // No next command on this socket. A late reply belongs to this
                     // abandoned session; the outer retry opens a fresh socket.
                     throw IOException("$text 応答タイムアウト（終端 > 未受信）", e)
                 } catch (e: IOException) {
+                    record(SystemClock.elapsedRealtimeNanos(), false, expired.get())
                     if (expired.get()) throw IOException("$text 通信タイムアウト（終端 > 未受信）", e)
                     throw e
                 } finally { writeGuard.cancel() }
@@ -225,7 +266,7 @@ class ObdController(private val context: Context) {
                 for (retry in 1..3) {
                     val raw = command(text, timeoutMs)
                     if (valid(raw)) return raw
-                    clearMetrics()
+                    publish(id) { it.copy(rpm = null, speedKmh = null, coolantC = null) }
                     val reason = ObdParser.failureReason(raw)
                     sessionLog(id, "$text → ${brief(raw)} / $reason ($retry/3)")
                     publish(id) { it.copy(connected = false, status = "再試行中 $text ($retry/3): $reason") }
@@ -237,58 +278,68 @@ class ObdController(private val context: Context) {
             for (init in listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0")) {
                 val raw = validated(init, if (init == "ATZ") 6000 else 3000) {
                     if (init == "ATZ") it.contains("ELM327", ignoreCase = true)
-                    else it.split('\r', '\n').any { line -> line.trim().equals("OK", true) }
+                    else ObdParser.adapterOk(it, init)
                 }
                 sessionLog(id, "$init → ${brief(raw)}")
             }
             publish(id) { it.copy(status = "ECU通信確認中…") }
             val supported = validated("0100", 12000) { ObdParser.payload(it, "00", 4) != null }
             sessionLog(id, "ECU通信成功: 0100 → ${brief(supported)}")
-            publish(id) { it.copy(connected = true, status = "データ取得中") }
-            monitor = launch {
-                while (isActive) {
-                    delay(250)
-                    if (lastRpm.get() != 0L && SystemClock.elapsedRealtimeNanos() - lastRpm.get() > 2_000_000_000L) {
-                        publish(id) { it.copy(rpmHz = null, rpmResponseMs = null, rpmAverageMs = null) }
-                    }
-                }
-            }
-            var count = 0
+            publish(id) { it.copy(connected = true, busy = false, status = "データ取得中") }
+            synchronized(lock) { if (id == session) benchmarks.connected(SystemClock.elapsedRealtimeNanos()) }
+            val scheduler = PollingScheduler()
+            var attemptedRevision = -1L
+            var lastFailureLog = 0L
             while (isActive && id == session) {
-                val raw = validated("010C") { ObdParser.rpm(it) != null }
-                val now = SystemClock.elapsedRealtimeNanos()
-                if (lastRpm.get() != 0L && now - lastRpm.get() > 2_000_000_000L) clearMetrics()
-                lastRpm.set(now)
-                timestamps.addLast(now)
-                durations.addLast(lastCommandMs)
-                while (timestamps.size > 16) timestamps.removeFirst()
-                while (durations.size > 16) durations.removeFirst()
-                val hz = if (timestamps.size >= 2) (timestamps.size - 1) * 1_000_000_000f /
-                    (timestamps.last() - timestamps.first()).coerceAtLeast(1) else null
-                publish(id) { it.copy(rpm = ObdParser.rpm(raw), rpmHz = hz,
-                    rpmResponseMs = lastCommandMs, rpmAverageMs = durations.average().toFloat(),
-                    connected = true, status = "データ取得中") }
-                if (count % 3 == 0) {
-                    val speed = validated("010D") { ObdParser.speedKmh(it) != null }
-                    publish(id) { it.copy(speedKmh = ObdParser.speedKmh(speed), connected = true, status = "データ取得中") }
+                val config = state.value
+                val desired = config.timing
+                if (attemptedRevision != config.timingRevision) {
+                    attemptedRevision = config.timingRevision
+                    val raw = command(desired.name, 3000)
+                    val ok = ObdParser.adapterOk(raw, desired.name)
+                    publish(id) { it.copy(appliedTiming = if (ok && it.timingRevision == config.timingRevision) desired else null,
+                        settingError = if (ok) null else "${desired.name} 失敗: ${brief(raw)}") }
+                    sessionLog(id, "${desired.name} → ${brief(raw)}")
+                    synchronized(lock) { if (id == session) benchmarks.connected(SystemClock.elapsedRealtimeNanos()) }
                 }
-                if (count % 15 == 0) {
-                    val temp = validated("0105") { ObdParser.coolantC(it) != null }
-                    publish(id) { it.copy(coolantC = ObdParser.coolantC(temp), connected = true, status = "データ取得中") }
+                val pid = synchronized(lock) {
+                    if (id != session) throw CancellationException()
+                    val value = _state.value
+                    if (value.appliedMode != value.mode) {
+                        benchmarks.connected(SystemClock.elapsedRealtimeNanos())
+                        _state.update { it.copy(appliedMode = it.mode, speedKmh = null, coolantC = null) }
+                    }
+                    scheduler.next(SystemClock.elapsedRealtimeNanos(), value.mode)
                 }
-                count++
+                val raw = command(pid.command, 3000)
+                val valid = when (pid) {
+                    Pid.RPM -> ObdParser.rpm(raw) != null
+                    Pid.SPEED -> ObdParser.speedKmh(raw) != null
+                    Pid.COOLANT -> ObdParser.coolantC(raw) != null
+                }
+                publish(id) {
+                    it.copy(rpm = if (pid == Pid.RPM) ObdParser.rpm(raw) else it.rpm,
+                        speedKmh = if (pid == Pid.SPEED) ObdParser.speedKmh(raw) else it.speedKmh,
+                        coolantC = if (pid == Pid.COOLANT) ObdParser.coolantC(raw) else it.coolantC,
+                        status = if (valid) "データ取得中" else "${pid.command}: ${ObdParser.failureReason(raw)}")
+                }
+                if (!valid && SystemClock.elapsedRealtimeNanos() - lastFailureLog >= 1_000_000_000L) {
+                    lastFailureLog = SystemClock.elapsedRealtimeNanos()
+                    sessionLog(id, "${pid.command} → ${brief(raw)}（連続エラーのログは最大1回/秒）")
+                }
             }
         } finally {
             // Closing first interrupts blocking read/write; cancellation alone cannot.
             try { local.close() } catch (_: Exception) { }
             reader?.cancel()
-            monitor?.cancel()
+
             replies.cancel()
             synchronized(lock) { if (socket === local) socket = null }
         }
     }
 
-    private suspend fun readPrompts(input: InputStream, replies: Channel<String>) {
+    private data class Reply(val text: String, val completedNs: Long)
+    private suspend fun readPrompts(input: InputStream, replies: Channel<Reply>) {
         val bytes = ByteArray(256)
         val text = StringBuilder()
         try {
@@ -298,7 +349,7 @@ class ObdController(private val context: Context) {
                 for (i in 0 until count) {
                     val char = (bytes[i].toInt() and 0xFF).toChar()
                     if (char == '>') {
-                        replies.send(text.toString())
+                        replies.send(Reply(text.toString(), SystemClock.elapsedRealtimeNanos()))
                         text.setLength(0)
                     } else {
                         if (text.length >= 8192) throw IOException("ELM327応答が長すぎます")
@@ -314,3 +365,7 @@ class ObdController(private val context: Context) {
     private fun brief(raw: String) = raw.replace('\r', ' ').replace('\n', ' ').trim().take(100).ifEmpty { "(空応答)" }
     fun close() { stopCurrent(); scope.cancel() }
 }
+
+/** Clears live telemetry and adapter acknowledgements, retaining user choices and completed results. */
+fun DashboardState.resetConnection(view: BenchmarkView = BenchmarkView()) = DashboardState(
+    devices = devices, logs = logs, mode = mode, timing = timing, benchmark = view)

@@ -4,6 +4,11 @@ import java.util.Locale
 
 /** Pure parsing functions. This file is also easy to unit-test on the JVM. */
 object ObdParser {
+    /** Accept a normal OK response, optionally preceded by this exact command echo. */
+    fun adapterOk(raw: String, command: String): Boolean = raw.uppercase(Locale.US)
+        .split('\r', '\n', '>').map { it.trim() }
+        .filter { it.isNotEmpty() && it != command.uppercase(Locale.US) } == listOf("OK")
+
     /**
      * Expected result after sending e.g. "010C": 41 0C AA BB.
      * Ignores spaces, line endings, command echo and CAN header prefixes.

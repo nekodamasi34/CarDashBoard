@@ -6,6 +6,14 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ObdParserTest {
+    @Test fun adapterTimingRequiresUnambiguousOk() {
+        org.junit.Assert.assertTrue(ObdParser.adapterOk("OK\r>", "ATAT1"))
+        org.junit.Assert.assertTrue(ObdParser.adapterOk("atat2\rOK\r>", "ATAT2"))
+        for (raw in listOf("?\r>", "ERROR", "", "ATAT1\r>", "OK\r?", "NOT OK", "ATAT2\rOK")) {
+            org.junit.Assert.assertFalse(raw, ObdParser.adapterOk(raw, "ATAT1"))
+        }
+    }
+
     @Test
     fun rpm_acceptsSpacesEchoAndCanHeaders() {
         assertEquals(1726f, ObdParser.rpm("010C\r7E8 04 41 0C 1A F8\r>"))
