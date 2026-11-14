@@ -25,7 +25,7 @@ internal fun TachometerFace(rpm: Float, modifier: Modifier) {
     }
     Canvas(modifier) {
         val radius = size.minDimension * HudDial.RadiusFraction
-        val center = Offset(size.width / 2, size.height / 2)
+        val center = Offset(size.width * HudDial.PivotX, size.height * HudDial.PivotY)
         drawBezel(center, radius)
         drawGraduations(center, radius, lettering)
         drawNeedle(center, radius, HudDial.angle(rpm))
@@ -53,7 +53,7 @@ private fun DrawScope.drawGraduations(center: Offset, radius: Float, paint: Pain
     fun point(angle: Float, r: Float) = radialPoint(center, angle, radius * r)
     val bandRadius = radius * .886f
     val redStart = HudDial.angle(HudDial.RedBandStartRpm)
-    drawArc(HudColors.RedBand, redStart, HudDial.StartDegrees + HudDial.SweepDegrees - redStart,
+    drawArc(HudColors.RedBand, redStart, HudDial.angle(HUD_MAX_RPM) - redStart,
         false, center - Offset(bandRadius, bandRadius), Size(bandRadius * 2, bandRadius * 2),
         style = Stroke(radius * .045f))
     for (tick in 0..100) {
@@ -76,7 +76,7 @@ private fun DrawScope.drawGraduations(center: Offset, radius: Float, paint: Pain
     }
     paint.color = HudColors.White.copy(alpha = .8f).toArgb()
     paint.textSize = radius * .073f
-    drawContext.canvas.nativeCanvas.drawText("x1000r/min", center.x, center.y - radius * .34f, paint)
+    drawContext.canvas.nativeCanvas.drawText("x1000r/min", center.x, center.y - radius * HudDial.UnitBaselineRadius, paint)
 }
 
 private fun DrawScope.drawNeedle(center: Offset, radius: Float, angle: Float) {

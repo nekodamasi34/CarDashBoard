@@ -9,6 +9,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,16 +34,44 @@ import kotlin.math.roundToInt
 
 /** Receive time drives freshness; animation never changes telemetry or measured Hz. */
 @Composable
-fun HudScreen(data: DashboardState, onExit: () -> Unit = {}) {
+fun HudScreen(data: DashboardState, onExit: () -> Unit = {},
+    onStart: (String, Int?) -> Unit = { _, _ -> }, onStop: () -> Unit = {},
+    onRefresh: () -> Unit = {}, onDemo: () -> Unit = {}) {
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtimeNanos()) }
     LaunchedEffect(Unit) {
         while (true) { now = SystemClock.elapsedRealtimeNanos(); delay(100) }
     }
-    HudInstruments(data.toHudState(now), onExit)
+    var setup by remember { mutableStateOf(false) }
+    var seconds by remember { mutableIntStateOf(5) }
+    var device by remember { mutableStateOf<String?>(null) }
+    if (setup) AlertDialog(onDismissRequest = { setup = false }, title = { Text("CANライブ検証") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("VP11の無送信・ACK抑止は未確認です。ATCSM1の応答やATMA受信だけでは証明できません。停車中に短時間から検証してください。上限で停止し、自動再開しません。")
+                Row { CanLiveSafety.validationSeconds.forEach { duration ->
+                    TextButton(onClick = { seconds = duration }) { Text(if (seconds == duration) "[$duration 秒]" else "$duration 秒") }
+                } }
+                data.devices.forEach { d -> TextButton(onClick = { device = d.address }) {
+                    Text((if (device == d.address) "✓ " else "") + d.name + "\n" + d.address)
+                } }
+                TextButton(onClick = onRefresh) { Text("Bluetooth機器を更新") }
+            }
+        }, confirmButton = { TextButton(enabled = device != null, onClick = {
+            setup = false; device?.let { onStart(it, seconds) }
+        }) { Text("確認して監視開始") } },
+        dismissButton = { TextButton(onClick = { setup = false }) { Text("キャンセル") } })
+    HudInstruments(data.toHudState(now), onExit, controls = {
+        TextButton(enabled = !data.busy && !data.canLiveRequested && !data.can.running,
+            onClick = { onRefresh(); setup = true }) { Text("CAN開始", color = HudColors.White) }
+        TextButton(onClick = onStop) { Text("停止", color = HudColors.White) }
+        TextButton(enabled = !data.busy && !data.canLiveRequested && !data.can.running,
+            onClick = onDemo) { Text("DEMO", color = HudColors.Muted) }
+    }, detail = data.status)
 }
 
 @Composable
-private fun HudInstruments(state: HudState, onExit: () -> Unit = {}) {
+private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
+    controls: @Composable () -> Unit = {}, detail: String = "") {
     val active = state.status == HudStatus.LIVE || state.status == HudStatus.DEMO
     Column(Modifier.fillMaxSize().background(HudColors.Background)
         .windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -51,6 +82,7 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {}) {
                 Text("‹", color = HudColors.Muted, fontSize = 25.sp,
                     modifier = Modifier.clearAndSetSemantics { contentDescription = "HUDを閉じる" })
             }
+            controls()
             Spacer(Modifier.weight(1f))
             Text(state.status.name, color = when (state.status) {
                 HudStatus.ERROR -> HudColors.Needle
@@ -60,6 +92,8 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {}) {
             }, fontSize = 10.sp, letterSpacing = 1.5.sp,
                 modifier = Modifier.padding(end = 20.dp))
         }
+        Text(detail, color = HudColors.Muted, fontSize = 10.sp, maxLines = 1,
+            modifier = Modifier.padding(horizontal = 12.dp))
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             // Reserve a footer before choosing a square that fits either orientation.
             val dialSize = minOf(maxWidth * .96f, (maxHeight - 62.dp).coerceAtLeast(0.dp))
@@ -99,15 +133,13 @@ fun TachometerGauge(rpm: Float?, speedKmh: Double? = null,
     val needle by animateFloatAsState((rpm ?: 0f).coerceIn(0f, HUD_MAX_RPM), tween(140), label = "rpm needle")
     BoxWithConstraints(modifier) {
         val dialWidth = maxWidth
-        val rpmLabelSize = with(LocalDensity.current) { (dialWidth * .024f).toSp() }
         TachometerFace(needle, Modifier.fillMaxSize())
         Column(Modifier.offset(x = dialWidth * HudDial.RpmLeft, y = dialWidth * HudDial.RpmTop)
-            .size(dialWidth * HudDial.RpmWidth, dialWidth * HudDial.RpmHeight),
+            .size(dialWidth * HudDial.RpmWidth, dialWidth * HudDial.RpmHeight)
+            .background(HudColors.Face),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            HudDigits(rpm?.roundToInt()?.toString() ?: "--", 5, dialWidth * .049f,
-                if ((rpm ?: 0f) >= HUD_REDLINE_RPM) HudColors.Needle else HudColors.White, "rpm")
-            Text("RPM", color = HudColors.Muted, fontSize = rpmLabelSize,
-                lineHeight = rpmLabelSize * 1.2f, letterSpacing = 1.sp)
+            HudDigits(rpm?.roundToInt()?.toString() ?: "--", 5, dialWidth * .040f,
+                if (HudDial.rpmWarning(rpm ?: 0f)) HudColors.Needle else HudColors.White, "rpm")
         }
         SpeedHud(speedKmh, Modifier.offset(x = dialWidth * HudDial.SpeedLeft, y = dialWidth * HudDial.SpeedTop)
             .size(dialWidth * HudDial.SpeedWidth, dialWidth * HudDial.SpeedHeight))
@@ -136,7 +168,7 @@ private fun HudDigits(value: String, slots: Int, digitSize: Dp, color: Color, un
     val fontSize = with(LocalDensity.current) { digitSize.toSp() }
     Row(Modifier.clearAndSetSemantics { contentDescription = "$value $unit" },
         verticalAlignment = Alignment.CenterVertically) {
-        value.padStart(slots, ' ').forEach { char ->
+        HudDial.digitCells(value, slots).forEach { char ->
             Text(char.toString(), modifier = Modifier.width(digitSize * .90f),
                 color = color, fontFamily = HudNumberFont, fontSize = fontSize,
                 lineHeight = fontSize * 1.2f,
@@ -184,3 +216,18 @@ private fun HudStalePreview() {
 @Preview(name = "HUD ERROR", widthDp = 393, heightDp = 851)
 @Composable
 private fun HudErrorPreview() { HudInstruments(HudState("CAN", HudStatus.ERROR)) }
+
+@Preview(name = "0 rpm", widthDp = 393, heightDp = 700)
+@Composable private fun Rpm0Preview() = RpmPreview(0f)
+@Preview(name = "1000 rpm", widthDp = 393, heightDp = 700)
+@Composable private fun Rpm1000Preview() = RpmPreview(1000f)
+@Preview(name = "5000 rpm", widthDp = 700, heightDp = 393)
+@Composable private fun Rpm5000Preview() = RpmPreview(5000f)
+@Preview(name = "8000 rpm", widthDp = 393, heightDp = 700)
+@Composable private fun Rpm8000Preview() = RpmPreview(8000f)
+@Preview(name = "8500 rpm", widthDp = 393, heightDp = 700)
+@Composable private fun Rpm8500Preview() = RpmPreview(8500f)
+@Preview(name = "10000 rpm", widthDp = 700, heightDp = 393)
+@Composable private fun Rpm10000Preview() = RpmPreview(10000f)
+@Composable private fun RpmPreview(rpm: Float) =
+    HudInstruments(HudState("DEMO", HudStatus.DEMO, Rx8CanValues(rpm, 0.0, 0f)))

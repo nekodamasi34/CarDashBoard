@@ -20,22 +20,30 @@ internal object HudColors {
     val Bezel = Color(0xFF55565A)
 }
 
-/** Canvas coordinates: 5 at twelve o'clock, 0/10 at the lower corners. */
+/** Canvas angles clockwise from right. Every scale component uses this interpolation. */
 internal object HudDial {
-    const val StartDegrees = 140f
-    const val SweepDegrees = 260f
-    const val RedBandStartRpm = 8000f
+    private val angles = floatArrayOf(90f, 110f, 132f, 154f, 177f, 201f, 227f, 254f, 282f, 309f, 335f)
+    const val RedBandStartRpm = HUD_REDLINE_RPM
     const val RadiusFraction = .478f
     const val NumeralRadius = .765f
-    const val NumeralSize = .19f
+    const val NumeralSize = .15f
     const val SpeedLeft = .535f
     const val SpeedTop = .615f
     const val SpeedWidth = .200f
     const val SpeedHeight = .137f
-    const val RpmLeft = .272f
-    const val RpmTop = .665f
+    const val RpmLeft = .380f
+    const val RpmTop = .394f
     const val RpmWidth = .240f
-    const val RpmHeight = .110f
+    const val RpmHeight = .050f
 
-    fun angle(rpm: Float) = StartDegrees + SweepDegrees * rpm.coerceIn(0f, HUD_MAX_RPM) / HUD_MAX_RPM
+    const val UnitBaselineRadius = .34f
+    const val PivotX = .5f
+    const val PivotY = .5f
+    fun angle(rpm: Float): Float {
+        val step = rpm.coerceIn(0f, HUD_MAX_RPM) / 1000f
+        val index = step.toInt().coerceAtMost(9)
+        return angles[index] + (angles[index + 1] - angles[index]) * (step - index)
+    }
+    fun rpmWarning(rpm: Float) = rpm >= HUD_REDLINE_RPM
+    fun digitCells(value: String, slots: Int) = value.padStart(slots, ' ')
 }

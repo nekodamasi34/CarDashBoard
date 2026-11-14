@@ -29,6 +29,7 @@ data class DashboardState(
     val diagnostic: AdapterDiagnosticView = AdapterDiagnosticView(),
     val communication: CommunicationMode = CommunicationMode.OBD,
     val can: CanView = CanView(),
+    val canLiveRequested: Boolean = false,
     val mode: PollingMode = PollingMode.RPM_PRIORITY,
     val timing: AdaptiveTiming = AdaptiveTiming.ATAT1,
     val appliedMode: PollingMode? = null,
@@ -61,6 +62,16 @@ class ObdController(private val context: Context) {
     private val lock = Any()
     private val benchmarks = BenchmarkManager()
     private val canBenchmarks = CanBenchmarkManager()
+    @Volatile private var liveSession: CanLiveSession? = null
+    fun startCanLive(address: String, seconds: Int?) {
+        if (state.value.busy || monitoring || state.value.diagnostic.running || diagnosticRequested) return
+        val request = CanLiveSession(seconds)
+        connect(address, request)
+    }
+    fun stopCanLive() {
+        liveSession?.stop()
+        disconnect()
+    }
     @Volatile private var experimentConsent = false
     @Volatile private var stoppingMonitor = false
     fun startCanExperiment() {
@@ -78,7 +89,7 @@ class ObdController(private val context: Context) {
     private val monitorSession = CanMonitorSession()
     private var retiringOperation: Job? = null
     fun startDiagnostics() {
-        if (!state.value.bluetoothConnected || monitoring || state.value.diagnostic.running) return
+        if (!state.value.bluetoothConnected || liveSession != null || monitoring || state.value.diagnostic.running) return
         diagnosticStop = false
         diagnosticRequested = true
         _state.update { it.copy(communication = CommunicationMode.OBD,
@@ -87,7 +98,7 @@ class ObdController(private val context: Context) {
     fun stopDiagnostics() { diagnosticStop = true }
     private val lastPid = mutableMapOf<Pid, Long>()
     fun selectCommunication(mode: CommunicationMode) {
-        if (diagnosticRequested || state.value.diagnostic.running) return
+        if (liveSession != null || diagnosticRequested || state.value.diagnostic.running) return
         _state.update { it.copy(communication = mode) }
     }
     private class ModeSwitch : IOException("通信方式切替: Socket再初期化")
@@ -179,6 +190,8 @@ class ObdController(private val context: Context) {
 
     private fun stopCurrent() = synchronized(lock) {
         experimentConsent = false
+        liveSession?.stop()
+        liveSession = null
         diagnosticRequested = false
         diagnosticStop = true
         monitorSession.disconnected()
@@ -198,7 +211,9 @@ class ObdController(private val context: Context) {
     fun disconnect() {
         if (monitoring) {
             manualStop = true
-            _state.update { it.copy(connected = false, rpm = null, speedKmh = null, status = "監視停止中…") }
+            _state.update { it.copy(connected = false, bluetoothConnected = false,
+                can = it.can.copy(latest = null, values = null),
+                rpm = null, speedKmh = null, status = "監視停止中…") }
             return
         }
         stopCurrent()
@@ -230,8 +245,10 @@ class ObdController(private val context: Context) {
     }
 
     /** Only read-only Mode 01 requests and ELM adapter configuration commands. */
-    fun connect(address: String) {
+    fun connect(address: String, liveRequest: CanLiveSession? = null) {
         stopCurrent()
+        liveSession = liveRequest
+        _state.update { it.copy(communication = if (liveRequest != null) CommunicationMode.CAN else CommunicationMode.OBD) }
         manualStop = false
         val id = session
         if (!hasConnectPermission()) {
@@ -239,7 +256,7 @@ class ObdController(private val context: Context) {
             log("Bluetooth接続権限が必要です")
             return
         }
-        _state.update { fresh(it, "Bluetooth接続中…", true) }
+        _state.update { fresh(it, "Bluetooth接続中…", true).copy(canLiveRequested = liveRequest != null) }
         _state.update { it.copy(diagnostic = AdapterDiagnosticView(adapterName = it.devices.firstOrNull { d -> d.address == address }?.name ?: "選択したアダプター")) }
         log("接続開始")
         val previousOperation = retiringOperation
@@ -274,6 +291,7 @@ class ObdController(private val context: Context) {
                     if (!CommunicationHealth.retry(manualStop, state.value.communication, attempt)) attempt = 3
                     val reason = e.message ?: e.javaClass.simpleName
                     experimentConsent = false
+                    liveSession?.stop(); liveSession = null
                     publish(id) { it.copy(communication = CommunicationMode.OBD) }
                     sessionLog(id, "通信失敗 ($attempt/3): ${e.javaClass.simpleName}: $reason")
                     synchronized(lock) { if (id == session) benchmarks.disconnected(SystemClock.elapsedRealtimeNanos()) }
@@ -328,6 +346,7 @@ class ObdController(private val context: Context) {
             val output = local.outputStream
             suspend fun command(text: String, timeoutMs: Long): String {
                 ensureActive()
+                check(!monitoring) { "CAN受信中のコマンド/PID送信は禁止" }
                 partialReply = ""
                 if (replies.tryReceive().isSuccess) throw IOException("予期しない終端 >（同期ずれ）")
                 val started = SystemClock.elapsedRealtimeNanos()
@@ -449,7 +468,7 @@ class ObdController(private val context: Context) {
                 check(silent.kind in listOf(ResponseKind.OK, ResponseKind.UNSUPPORTED)) { "ATCSM1通信異常: ${silent.kind}" }
                 val filter = diagnose("ATCRA201")
                 // Explicit experimental consent is separate from independently verified silent behavior.
-                check(monitorSession.authorize(true, silent.support, filter.support, trustedEvidence = false, experimentalConsent = experimentConsent)) {
+                check(monitorSession.authorize(true, silent.support, filter.support, trustedEvidence = false, experimentalConsent = experimentConsent || liveSession?.requested == true)) {
                     "CAN監視保留: ATCSM1=${silent.support.label}, ATCRA201=${filter.support.label}。サイレント動作の信頼できる根拠が未登録（CAN全体の非対応を意味しません）"
                 }
                 check(id == session && state.value.communication == CommunicationMode.CAN && state.value.bluetoothConnected && state.value.diagnostic.ecuVerified && !diagnosticRequested && !state.value.diagnostic.running) { "接続／ECU確認が無効・開始取消" }
@@ -467,15 +486,20 @@ class ObdController(private val context: Context) {
                     try { output.write(bytes); output.flush() } finally { guard.cancel() }
                 }
                 val started = SystemClock.elapsedRealtimeNanos()
+                val live = liveSession
+                live?.started(started)
                 attemptedMonitor = true
                 try {
-                    canBenchmarks.start(started, CanExperiment.DURATION_NS)
+                    if (live == null) canBenchmarks.start(started, CanExperiment.DURATION_NS)
                     canBenchmarks.experimentInfo = canBenchmarks.experimentInfo.copy(atma = "送信済み（未対応応答なし）")
                     monitorWrite("ATMA\r".toByteArray(Charsets.US_ASCII))
                     while (isActive && id == session && !manualStop && state.value.communication == CommunicationMode.CAN) {
-                        if (monitorFailure != null || CanExperiment(started).expired(SystemClock.elapsedRealtimeNanos())) break
-                        val now = SystemClock.elapsedRealtimeNanos()
-                        delay(minOf(20L, ((CanExperiment.DURATION_NS - (now - started)) / 1_000_000).coerceAtLeast(1)))
+                        if (monitorFailure != null) break
+                        if (live != null) {
+                            if (!live.receiving(SystemClock.elapsedRealtimeNanos())) break
+                        } else if (CanExperiment(started).expired(SystemClock.elapsedRealtimeNanos())) break
+                        val remainingMs = (CanExperiment.DURATION_NS - (SystemClock.elapsedRealtimeNanos() - started)) / 1_000_000
+                        delay(if (live != null) 20 else minOf(20, remainingMs.coerceAtLeast(1)))
                     }
                     // Exactly one CR; no printable character followed by CR that could become a command.
                     stoppingMonitor = true
@@ -483,7 +507,7 @@ class ObdController(private val context: Context) {
                     try { MonitorStopProtocol.finish(replies.tryReceive().isSuccess,
                         write = { monitorWrite(it) }, prompt = { replies.receive(); Unit }) }
                     catch (e: TimeoutCancellationException) { throw IOException("監視停止の > 未復帰。Socket破棄・再初期化", e) }
-                    val reason = monitorFailure ?: if (manualStop) "手動切断" else if (CanExperiment(started).expired(SystemClock.elapsedRealtimeNanos())) "5秒自動停止" else "手動停止"
+                    val reason = monitorFailure ?: if (manualStop) "手動切断" else if (live != null && live.expired(SystemClock.elapsedRealtimeNanos())) "検証時間上限で停止" else if (live == null && CanExperiment(started).expired(SystemClock.elapsedRealtimeNanos())) "5秒自動停止" else "手動停止"
                     canBenchmarks.stop(SystemClock.elapsedRealtimeNanos(), reason)
                     sessionLog(id, "監視終了: $reason / > 復帰確認。Socketを再初期化")
                 } catch (e: Exception) {
@@ -498,6 +522,13 @@ class ObdController(private val context: Context) {
                     } }
                     publish(id) { fresh(it, if (manualStop) "手動切断（再接続しません）" else "監視終了／再初期化") }
                 }
+                if (live != null) {
+                    live.stop()
+                    publish(id) { fresh(it, reasonForLive(monitorFailure)).copy(
+                        communication = CommunicationMode.CAN, communicationError = monitorFailure) }
+                    liveSession = null
+                    return@coroutineScope
+                }
                 publish(id) { it.copy(communication = CommunicationMode.OBD) }
                 if (manualStop) return@coroutineScope
                 throw ModeSwitch()
@@ -505,6 +536,13 @@ class ObdController(private val context: Context) {
               } catch (e: CancellationException) { throw e
               } catch (e: Exception) {
                   experimentConsent = false
+                  if (liveSession != null) {
+                      liveSession?.stop()
+                      liveSession = null
+                      publish(id) { fresh(it, "CAN停止: ${e.message}").copy(
+                          communication = CommunicationMode.CAN, communicationError = e.message ?: "CAN通信異常") }
+                      return@coroutineScope
+                  }
                   if (!attemptedMonitor) {
                       val now = SystemClock.elapsedRealtimeNanos()
                       val d = state.value.diagnostic
@@ -618,7 +656,11 @@ class ObdController(private val context: Context) {
                                 val frame = CanFrameParser.parse(line, now)
                                 synchronized(lock) { if (id == session) {
                                     canBenchmarks.rawRow(now, line, frame)
-                                    if (frame != null && frame.id == 0x201) canBenchmarks.record(frame)
+                                    if (frame != null && frame.id == 0x201) {
+                                        canBenchmarks.record(frame)
+                                        val values = Rx8CanDecoder().decode(frame)
+                                        publish(id) { it.copy(can = it.can.copy(latest = frame, values = values)) }
+                                    }
                                     else canBenchmarks.invalid(now)
                                 } }
                             }
@@ -639,6 +681,7 @@ class ObdController(private val context: Context) {
         } finally { replies.close() }
     }
 
+    private fun reasonForLive(failure: String?) = failure?.let { "CAN停止: $it" } ?: "CAN監視停止（自動再開しません）"
     private fun brief(raw: String) = raw.replace('\r', ' ').replace('\n', ' ').trim().take(100).ifEmpty { "(空応答)" }
     fun close() { stopCurrent(); scope.cancel() }
 }

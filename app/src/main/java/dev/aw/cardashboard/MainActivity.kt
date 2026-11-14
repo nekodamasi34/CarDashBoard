@@ -139,7 +139,9 @@ private fun DashboardScreen(controller: ObdController, setHudFullscreen: (Boolea
     }
     BackHandler(enabled = page == 4) { page = 0 }
     if (page == 4) {
-        HudScreen(data, onExit = { page = 0 })
+        HudScreen(data, onExit = { page = 0 }, onStart = controller::startCanLive,
+            onStop = controller::stopCanLive, onRefresh = ::refreshBluetooth,
+            onDemo = controller::startDemo)
         return
     }
 
@@ -154,7 +156,7 @@ private fun DashboardScreen(controller: ObdController, setHudFullscreen: (Boolea
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.4.2", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.4.3", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
