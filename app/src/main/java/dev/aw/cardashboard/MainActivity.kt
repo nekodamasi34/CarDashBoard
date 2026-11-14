@@ -9,6 +9,11 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.compose.runtime.DisposableEffect
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -75,8 +80,17 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(
                 colorScheme = darkColorScheme(primary = Accent, background = Background, surface = Panel)
             ) {
-                Surface(color = Background) { DashboardScreen(controller) }
+                Surface(color = Background) { DashboardScreen(controller, ::setHudFullscreen) }
             }
+        }
+    }
+
+    private fun setHudFullscreen(enabled: Boolean) {
+        WindowCompat.setDecorFitsSystemWindows(window, !enabled)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (enabled) hide(WindowInsetsCompat.Type.systemBars())
+            else show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -87,7 +101,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun DashboardScreen(controller: ObdController) {
+private fun DashboardScreen(controller: ObdController, setHudFullscreen: (Boolean) -> Unit) {
     val data by controller.state.collectAsState()
     val context = LocalContext.current
     var page by remember { mutableStateOf(0) }
@@ -111,6 +125,16 @@ private fun DashboardScreen(controller: ObdController) {
         ) controller.refreshDevices()
     }
 
+    DisposableEffect(page == 4) {
+        setHudFullscreen(page == 4)
+        onDispose { setHudFullscreen(false) }
+    }
+    BackHandler(enabled = page == 4) { page = 0 }
+    if (page == 4) {
+        HudScreen(data, onExit = { page = 0 })
+        return
+    }
+
     Column(
         modifier = Modifier.fillMaxSize()
             .background(Background)
@@ -122,7 +146,7 @@ private fun DashboardScreen(controller: ObdController) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.4", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.4.1", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
@@ -137,7 +161,7 @@ private fun DashboardScreen(controller: ObdController) {
         OutlinedButton(onClick = { page = 3 }) { Text("アダプター診断") }
         }
         if (data.communication == CommunicationMode.CAN) Text("CANデコードは未検証の参考値です", color = Accent)
-        if (page == 4) { HudScreen(data) } else if (page == 3) { DiagnosticPane(data, controller) } else if (page == 2) { CanPane(data, controller) } else if (page == 1) {
+        if (page == 3) { DiagnosticPane(data, controller) } else if (page == 2) { CanPane(data, controller) } else if (page == 1) {
             BenchmarkPane(data, controller)
         } else {
             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
