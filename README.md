@@ -1,8 +1,19 @@
-# CarDashBoard v0.3.2
+# CarDashBoard v0.4
 
 Mazda RX-8（2005年式 前期 Type S 6MT）向けAndroid/Kotlin/Jetpack Composeアプリ。
 Bluetooth Classic SPP接続のELM327互換アダプターを使用します。
-Application ID: `dev.aw.cardashboard` / versionCode: `5`。
+Application ID: `dev.aw.cardashboard` / versionCode: `6`。
+
+## CAN HUD（v0.4）
+
+画面上部の横スクロールタブから「HUD」を選択。黒い文字盤・白い目盛り・オレンジの針をCanvasで描く、RX-8前期の雰囲気を参考にした独自タコメーターです。外部画像は使用しません。
+0〜10000rpm、8500rpm以上を赤で強調し、RPM数値・大型デジタル車速・アクセル開度の数値とバーを表示します。
+
+CAN 0x201の8バイトフレームを既存Rx8CanDecoderでデコードします。RPM=Byte0-1/4、車速=(Byte4-5−10000)/100（負値は0）、アクセル=Byte6/2（0〜100%）。HUDは通常OBD値へ自動代替しません。OBD2選択時はCAN未受信を表示し、従来メーターでは通常OBD値を利用できます。
+CANを表示するには既存の診断・CAN実験モードを使用します。既存の毎回同意・最大5秒の実験制限を維持しており、連続CAN監視を解禁する変更ではありません。
+
+受信時刻は単調時計で保持し、更新から3秒を超えるとSTALEと減光で通知します。RPM 0も正常な受信値です。通信エラー・未接続・未受信・DEMOを区別し、CAN実測受信Hzを表示します。針140ms・アクセルバー120msの補間は描画専用で、実測値・受信時刻・Hzを書き換えません。デモ値は独立した状態で3項目とも変化します。
+実装と確認方法は [v0.4 Release Notes](RELEASE_NOTES-v0.4.md) を参照。
 
 通常OBD2のRPM・車速・水温、3ポーリングモード、ATAT1/2、30秒ベンチマーク、CSV、通信ログ、デモを維持しています。
 CAN ID 0x201のRAW解析、受信周期・Hz計算とCANベンチマークの処理も維持しています。換算式は未検証の参考値です。
@@ -41,9 +52,10 @@ Android StudioのJDKとAndroid SDK 36.1を使用します。
 
 ## 変更履歴
 
+- v0.4: CANベースHUD、RX-8風タコメーター、RPM・車速・アクセル表示、鮮度通知と独立デモ値。
 - v0.3.2: 毎回同意のCAN実験モード、ATMA最大5秒監視、RAW CSV、停止・Bluetooth復旧の安定化。
 - v0.3.1: VP11互換性診断、RAW/CSV/コピー、ATCSM1未対応と通信異常の区別、未検証ATMAの抑止、失敗後の通常OBD2への復帰。
 - v0.3: CAN直接受信・0x201解析、CANベンチマーク、通信高速化検証。
 - v0.2: 3種類のポーリング、ATAT1/2、OBD2ベンチマーク。
 
-インストール方法・未検証事項は [Release Notes](RELEASE_NOTES-v0.3.2.md) を参照してください。
+インストール方法・未検証事項は [Release Notes](RELEASE_NOTES-v0.4.md) を参照してください。

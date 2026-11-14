@@ -41,6 +41,9 @@ data class DashboardState(
     val bluetoothConnected: Boolean = false,
     val busy: Boolean = false,
     val demo: Boolean = false,
+    val demoHud: Rx8CanValues? = null,
+    val demoUpdatedNs: Long? = null,
+    val communicationError: String? = null,
     val devices: List<PairedDevice> = emptyList(),
     val rpm: Float? = null,
     val speedKmh: Int? = null,
@@ -216,7 +219,11 @@ class ObdController(private val context: Context) {
                 val rpm = 2700 + 1900 * sin(seconds * 0.85) + 370 * sin(seconds * 2.2)
                 publish(id) { it.copy(rpm = rpm.toFloat().coerceIn(700f, 7500f),
                     speedKmh = (50 + 32 * sin(seconds * 0.24)).toInt().coerceAtLeast(0),
-                    coolantC = 83 + ((seconds / 7) % 11).toInt()) }
+                    coolantC = 83 + ((seconds / 7) % 11).toInt(),
+                    demoHud = Rx8CanValues((4800 + 4400 * sin(seconds * .55)).toFloat(),
+                        (50 + 32 * sin(seconds * .24)).coerceAtLeast(0.0),
+                        (50 + 50 * sin(seconds * .85)).toFloat()),
+                    demoUpdatedNs = SystemClock.elapsedRealtimeNanos()) }
                 delay(50)
             }
         }
@@ -228,7 +235,7 @@ class ObdController(private val context: Context) {
         manualStop = false
         val id = session
         if (!hasConnectPermission()) {
-            _state.update { fresh(it, "接続エラー: Bluetooth接続権限が必要です") }
+            _state.update { fresh(it, "接続エラー: Bluetooth接続権限が必要です").copy(communicationError = "Bluetooth接続権限が必要です") }
             log("Bluetooth接続権限が必要です")
             return
         }
@@ -272,7 +279,7 @@ class ObdController(private val context: Context) {
                     synchronized(lock) { if (id == session) benchmarks.disconnected(SystemClock.elapsedRealtimeNanos()) }
                     publish(id) { fresh(it,
                         busy = attempt < 3, status = if (attempt < 3)
-                            "再試行中 ($attempt/3): $reason" else "接続エラー: $reason") }
+                            "再試行中 ($attempt/3): $reason" else "接続エラー: $reason").copy(communicationError = reason) }
                     if (attempt < 3) { sessionLog(id, "再接続待機 ${BluetoothRecovery.waitMs(attempt)}ms"); delay(BluetoothRecovery.waitMs(attempt)) }
                     attempt++
                 }
@@ -315,7 +322,7 @@ class ObdController(private val context: Context) {
             } finally { guard.cancelAndJoin() }
             ensureActive()
             sessionLog(id, "Bluetooth接続成功 ${(SystemClock.elapsedRealtimeNanos() - connectStart) / 1_000_000}ms（ECU未確認）")
-            publish(id) { it.copy(bluetoothConnected = true, status = "ELM327初期化中…") }
+            publish(id) { it.copy(bluetoothConnected = true, communicationError = null, status = "ELM327初期化中…") }
             synchronized(lock) { if (id == session) lastPid.clear() }
             reader = launch(Dispatchers.IO) { readPrompts(local.inputStream, replies, id) }
             val output = local.outputStream

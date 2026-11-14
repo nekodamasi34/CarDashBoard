@@ -23,14 +23,16 @@ object CanFrameParser {
     fun parseLines(raw: String, now: Long) = raw.split('\r', '\n').mapNotNull { parse(it, now) }
 }
 
-data class Rx8CanValues(val rpm: Float, val speedKmh: Double)
+data class Rx8CanValues(val rpm: Float, val speedKmh: Double, val acceleratorPercent: Float = 0f)
 /** Unverified on Japanese 2005 RX-8. Offsets are zero based; big endian. */
 class Rx8CanDecoder(val rpmOffset: Int = 0, val rpmDivisor: Double = 4.0,
     val speedOffset: Int = 4, val speedBias: Double = 10000.0, val speedDivisor: Double = 100.0) {
     fun decode(frame: CanFrame): Rx8CanValues? {
         if (frame.id != 0x201 || frame.data.size != 8) return null
         fun word(offset: Int) = frame.data[offset] * 256 + frame.data[offset + 1]
-        return Rx8CanValues((word(rpmOffset) / rpmDivisor).toFloat(), (word(speedOffset) - speedBias) / speedDivisor)
+        return Rx8CanValues((word(rpmOffset) / rpmDivisor).toFloat(),
+            ((word(speedOffset) - speedBias) / speedDivisor).coerceAtLeast(0.0),
+            (frame.data[6] / 2f).coerceIn(0f, 100f))
     }
 }
 

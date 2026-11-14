@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -121,21 +122,22 @@ private fun DashboardScreen(controller: ObdController) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.3.2", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.4", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
                 fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { page = 0 }) { Text("メーター") }
+            OutlinedButton(onClick = { page = 4 }) { Text("HUD") }
             OutlinedButton(onClick = { page = 1 }) { Text("通信ベンチマーク") }
-        }
         OutlinedButton(onClick = { page = 2 }) { Text("CANモニター") }
         OutlinedButton(onClick = { page = 3 }) { Text("アダプター診断") }
+        }
         if (data.communication == CommunicationMode.CAN) Text("CANデコードは未検証の参考値です", color = Accent)
-        if (page == 3) { DiagnosticPane(data, controller) } else if (page == 2) { CanPane(data, controller) } else if (page == 1) {
+        if (page == 4) { HudScreen(data) } else if (page == 3) { DiagnosticPane(data, controller) } else if (page == 2) { CanPane(data, controller) } else if (page == 1) {
             BenchmarkPane(data, controller)
         } else {
             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
