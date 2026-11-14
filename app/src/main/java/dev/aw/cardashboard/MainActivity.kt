@@ -14,6 +14,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -73,6 +74,7 @@ private val Muted = Color(0xFFA2B1C0)
 
 class MainActivity : ComponentActivity() {
     private val controller by lazy { ObdController(applicationContext) }
+    private var hudFullscreen = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,12 +88,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setHudFullscreen(enabled: Boolean) {
+        hudFullscreen = enabled
         WindowCompat.setDecorFitsSystemWindows(window, !enabled)
         WindowCompat.getInsetsController(window, window.decorView).apply {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             if (enabled) hide(WindowInsetsCompat.Type.systemBars())
             else show(WindowInsetsCompat.Type.systemBars())
         }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && hudFullscreen) setHudFullscreen(true)
     }
 
     override fun onDestroy() {
@@ -104,7 +112,7 @@ class MainActivity : ComponentActivity() {
 private fun DashboardScreen(controller: ObdController, setHudFullscreen: (Boolean) -> Unit) {
     val data by controller.state.collectAsState()
     val context = LocalContext.current
-    var page by remember { mutableStateOf(0) }
+    var page by rememberSaveable { mutableStateOf(0) }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) controller.refreshDevices() }
@@ -146,7 +154,7 @@ private fun DashboardScreen(controller: ObdController, setHudFullscreen: (Boolea
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.4.1", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.4.2", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
