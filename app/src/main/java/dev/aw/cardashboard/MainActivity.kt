@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
 private fun DashboardScreen(controller: ObdController) {
     val data by controller.state.collectAsState()
     val context = LocalContext.current
-    var benchmarkPage by remember { mutableStateOf(false) }
+    var page by remember { mutableStateOf(0) }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) controller.refreshDevices() }
@@ -119,7 +119,7 @@ private fun DashboardScreen(controller: ObdController) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.2", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.3", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
@@ -127,10 +127,12 @@ private fun DashboardScreen(controller: ObdController) {
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { benchmarkPage = false }) { Text("メーター") }
-            OutlinedButton(onClick = { benchmarkPage = true }) { Text("通信ベンチマーク") }
+            OutlinedButton(onClick = { page = 0 }) { Text("メーター") }
+            OutlinedButton(onClick = { page = 1 }) { Text("通信ベンチマーク") }
         }
-        if (benchmarkPage) {
+        OutlinedButton(onClick = { page = 2 }) { Text("CANモニター") }
+        if (data.communication == CommunicationMode.CAN) Text("CANデコードは未検証の参考値です", color = Accent)
+        if (page == 2) { CanPane(data, controller) } else if (page == 1) {
             BenchmarkPane(data, controller)
         } else {
             Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
@@ -190,7 +192,7 @@ private fun DashboardScreen(controller: ObdController) {
                     data.devices.forEach { device ->
                         OutlinedButton(
                             onClick = { controller.connect(device.address) },
-                            enabled = !data.busy && !data.connected,
+                            enabled = !data.busy && !data.bluetoothConnected,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
@@ -250,8 +252,9 @@ private fun BenchmarkPane(data: DashboardState, controller: ObdController) {
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
+    if (data.communication == CommunicationMode.CAN) { CanPane(data, controller); return }
     val view = data.benchmark
-    val editable = !view.running
+    val editable = !view.running && data.communication == CommunicationMode.OBD
     Text("停車中に条件を選び、走行前に計測を開始してください。", color = Muted)
     Text("取得モード", color = Accent)
     PollingMode.entries.forEach { mode ->
@@ -289,7 +292,7 @@ private fun BenchmarkPane(data: DashboardState, controller: ObdController) {
             save.launch("CarDashBoard-${result.date.replace(":", "-")}.csv")
         }) { Text("結果をCSV保存") }
     }
-    Text("従来の実測約10Hzと比較。15Hz達成は実車計測で判定します。デモは計測対象外です。", color = Muted)
+    Text("v0.2実測: RPM専用 ATAT1 15.20Hz / ATAT2 16.97Hz、RPM優先 ATAT2 15.27Hz、バランス ATAT2 12.93Hz。各30秒・成功100%・timeout 0。", color = Muted)
 }
 
 @Composable
@@ -301,4 +304,52 @@ private fun StatsText(s: BenchmarkStats) {
         "成功 ${s.success} / 失敗 ${s.failed} / 成功率 ${number(s.successPercent)} %\n" +
         "タイムアウト ${s.timeouts} / RPM間隔標準偏差 ${number(s.jitterMs)} ms", color = Color.White,
         fontSize = 14.sp, lineHeight = 23.sp)
+}
+
+@Composable
+private fun CanPane(data: DashboardState, controller: ObdController) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var csv by remember { mutableStateOf("") }
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) scope.launch {
+            val message = withContext(Dispatchers.IO) {
+                runCatching {
+                    val stream = context.contentResolver.openOutputStream(uri) ?: error("保存先を開けません")
+                    stream.bufferedWriter(Charsets.UTF_8).use { it.write("\uFEFF" + csv) }
+                }.fold({ "CSV保存完了" }, { "CSV保存失敗: ${it.message}" })
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+    Text("CAN直接監視（実験・VP11実機未確認）", color = Accent)
+    Text("停車中・IG ON・エンジン停止で初回確認。長時間測定はバッテリー消耗に注意。", color = Muted)
+    Button(onClick = { controller.selectCommunication(CommunicationMode.CAN) },
+        enabled = data.communication != CommunicationMode.CAN) { Text("CAN選択・監視開始") }
+    OutlinedButton(onClick = { controller.selectCommunication(CommunicationMode.OBD) },
+        enabled = data.communication == CommunicationMode.CAN) { Text("監視停止・通常OBD2へ") }
+    Text("選択: ${data.communication} / ${data.status}\n未接続の場合は下の機器一覧から接続してください。", color = Muted)
+    val s = data.can.live
+    Text("ID 0x201 / DLC ${data.can.latest?.data?.size ?: "--"}\n" +
+        "スマホ到着Hz（監視開始からの平均） ${number(s.hz)}\n" +
+        "RPM値変化Hz ${number(s.rpmChangedHz)}\n" +
+        "到着間隔 最新 ${number(s.latestMs)} / 平均 ${number(s.meanMs)} ms\n" +
+        "最小 ${number(s.minMs)} / 最大 ${number(s.maxMs)} / P95 ${number(s.p95Ms)} ms\n" +
+        "標準偏差 ${number(s.stddevMs)} ms\n" +
+        "フレーム ${s.frames} / 不正 ${s.invalid} / 通信エラー ${s.errors}", color = Color.White)
+    Text("解析: " + if (!data.connected || data.can.values == null) "無効／未受信／期限切れ" else
+        "候補（未検証） RPM ${data.can.values.rpm} / 車速 ${number(data.can.values.speedKmh)} km/h", color = Accent)
+    Text("参考式: BE[0..1]/4 rpm、(BE[4..5]-10000)/100 km/h\n" +
+        "到着周期はCANバス上の送信周期とは異なる場合があります。値変化Hzは同じRPMの繰返しを数えません。\n" +
+        "P95は1ms切上げヒストグラム（60秒以上は最終bin）。欠損数はシーケンス番号がないため推定しません。", color = Muted, fontSize = 12.sp)
+    Button(onClick = { controller.startCanBenchmark() }, enabled = data.connected && !data.can.running &&
+        data.communication == CommunicationMode.CAN) { Text(if (data.can.running) "CAN計測中…" else "CAN 30秒計測") }
+    OutlinedButton(onClick = { controller.stopCanBenchmark() }, enabled = data.can.running) { Text("計測停止") }
+    data.can.result?.let { result ->
+        Text("${result.date} / ${result.reason}\n${number(result.stats.seconds)}秒 / ${result.stats.frames}枚 / " +
+            "${number(result.stats.hz)}Hz\n平均 ${number(result.stats.meanMs)} / P95 ${number(result.stats.p95Ms)} / 最大 ${number(result.stats.maxMs)} ms\n" +
+            "不正 ${result.stats.invalid} / エラー ${result.stats.errors}", color = Accent)
+        OutlinedButton(onClick = { csv = result.csv(); save.launch("CarDashBoard-CAN-v0.3.csv") }) { Text("CAN結果CSV保存") }
+    }
+    Text("RAW（単調増加ns、直近35行）\n" + data.can.raw.joinToString("\n"), color = Muted, fontSize = 11.sp)
 }
