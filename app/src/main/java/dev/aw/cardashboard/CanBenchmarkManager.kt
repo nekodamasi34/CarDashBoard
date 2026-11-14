@@ -8,10 +8,13 @@ data class CanStats(val seconds: Double = 0.0, val frames: Long = 0, val invalid
     val errors: Long = 0, val hz: Double = 0.0, val rpmChangedHz: Double = 0.0,
     val latestMs: Double? = null, val meanMs: Double? = null, val minMs: Double? = null,
     val maxMs: Double? = null, val p95Ms: Double? = null, val stddevMs: Double? = null)
-data class CanResult(val date: String, val stats: CanStats, val reason: String) {
-    fun csv() = "date,communication,can_id,duration_s,frames,arrival_hz,rpm_changed_hz,mean_interval_ms,p95_interval_ms,max_interval_ms,invalid,errors,reason\r\n" +
+data class CanResult(val date: String, val stats: CanStats, val reason: String, val info: ExperimentInfo = ExperimentInfo(),
+    val rows: List<RawCanRow> = emptyList(), val dropped: Long = 0) {
+    fun rawCsv() = "received_monotonic_ns,can_id,dlc,Data0,Data1,Data2,Data3,Data4,Data5,Data6,Data7,raw,parsed\r\n" +
+        rows.joinToString("\r\n") { csvCells(it.cells()) } + "\r\n"
+    fun csv() = "date,communication,can_id,duration_s,frames,arrival_hz,rpm_changed_hz,mean_interval_ms,p95_interval_ms,max_interval_ms,invalid,errors,reason,elm,protocol,ATCSM1,ATCRA201,ATMA,raw_dropped\r\n" +
         listOf(date, "CAN", "0x201", stats.seconds, stats.frames, stats.hz, stats.rpmChangedHz,
-            stats.meanMs, stats.p95Ms, stats.maxMs, stats.invalid, stats.errors, reason)
+            stats.meanMs, stats.p95Ms, stats.maxMs, stats.invalid, stats.errors, reason, info.elm, info.protocol, info.silent, info.filter, info.atma, dropped)
             .joinToString(",") { "\"${it.toString().replace("\"", "\"\"")}\"" } + "\r\n"
 }
 data class CanView(val live: CanStats = CanStats(), val running: Boolean = false,
@@ -51,6 +54,14 @@ private class CanAccumulator(val start: Long) {
 }
 
 class CanBenchmarkManager {
+    @Volatile var experimentInfo = ExperimentInfo()
+    private var durationNs = 30_000_000_000L
+    private val rows = ArrayList<RawCanRow>()
+    private var dropped = 0L
+    @Synchronized fun rawRow(now: Long, text: String, frame: CanFrame?) {
+        if (eligible(now) == null) return
+        if (rows.size < 10000) rows.add(RawCanRow(now, text.take(256), frame)) else dropped++
+    }
     private var live: CanAccumulator? = null
     private var run: CanAccumulator? = null
     private var date = ""
@@ -60,8 +71,10 @@ class CanBenchmarkManager {
     private val raw = ArrayDeque<String>()
     private val decoder = Rx8CanDecoder()
     @Synchronized fun connected(now: Long) { live = CanAccumulator(now); latest = null; values = null; raw.clear() }
-    @Synchronized fun start(now: Long) { if (live != null && run == null) { run = CanAccumulator(now); date = Instant.now().toString() } }
-    private fun eligible(now: Long) = run?.takeIf { now >= it.start && now <= it.start + 30_000_000_000L }
+    @Synchronized fun start(now: Long, duration: Long = 30_000_000_000L) { if (live != null && run == null) {
+        durationNs = duration; rows.clear(); dropped = 0; run = CanAccumulator(now); date = Instant.now().toString()
+    } }
+    private fun eligible(now: Long) = run?.takeIf { now >= it.start && now <= it.start + durationNs }
     @Synchronized fun record(frame: CanFrame) {
         if (frame.id != 0x201) return
         latest = frame; values = decoder.decode(frame)
@@ -70,13 +83,13 @@ class CanBenchmarkManager {
         live?.record(frame, values?.rpm); eligible(frame.receivedNs)?.record(frame, values?.rpm)
     }
     @Synchronized fun invalid(now: Long) { live?.let { it.invalid++ }; eligible(now)?.let { it.invalid++ } }
-    @Synchronized fun error(now: Long) { live?.let { it.errors++ }; eligible(now)?.let { it.errors++ } }
+    @Synchronized fun error(now: Long) { live?.let { it.errors++ }; run?.let { it.errors++ } }
     @Synchronized fun stop(now: Long, reason: String = "手動停止") {
-        run?.let { result = CanResult(date, it.stats(minOf(now, it.start + 30_000_000_000L)), reason) }; run = null
+        run?.let { result = CanResult(date, it.stats(minOf(now, it.start + durationNs)), reason, experimentInfo, rows.toList(), dropped) }; run = null
     }
     @Synchronized fun disconnected(now: Long) { stop(now, "監視終了／通信切断"); live = null; latest = null; values = null; raw.clear() }
     @Synchronized fun snapshot(now: Long): CanView {
-        run?.let { if (now >= it.start + 30_000_000_000L) stop(it.start + 30_000_000_000L, "30秒完了") }
+        run?.let { if (durationNs != CanExperiment.DURATION_NS && now >= it.start + durationNs) stop(it.start + durationNs, "30秒完了") }
         return CanView(live?.stats(now) ?: CanStats(), run != null, result, latest, values, raw.toList())
     }
 }

@@ -1,4 +1,6 @@
 package dev.aw.cardashboard
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 
 import android.Manifest
 import android.content.Intent
@@ -119,7 +121,7 @@ private fun DashboardScreen(controller: ObdController) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("RX-8 DASHBOARD", fontWeight = FontWeight.Black, fontSize = 25.sp, color = Color.White)
-                Text("VP11  /  ELM327  /  v0.3.1", fontSize = 12.sp, color = Muted)
+                Text("VP11  /  ELM327  /  v0.3.2", fontSize = 12.sp, color = Muted)
             }
             Text(if (data.demo) "DEMO" else if (data.connected) "LIVE" else "OFFLINE",
                 color = if (data.demo) Color(0xFFFFBE55) else if (data.connected) Accent else Muted,
@@ -324,13 +326,24 @@ private fun CanPane(data: DashboardState, controller: ObdController) {
         }
     }
     Text("CAN直接監視（実験・VP11実機未確認）", color = Accent)
+    var confirmExperiment by remember { mutableStateOf(false) }
+    if (confirmExperiment) AlertDialog(onDismissRequest = { confirmExperiment = false },
+        title = { Text("CAN実験モード・毎回確認") },
+        text = { Text("このアダプターのCANサイレント監視動作は未検証です。ATMAはCAN監視コマンドですが、互換ファームウェアによるACK等の送信有無は保証されません。実車CAN通信へ影響する可能性があります。完全停車状態で短時間の実験を行ってください。") },
+        confirmButton = { Button(onClick = { confirmExperiment = false; controller.startCanExperiment() }) { Text("確認して5秒間の実験開始") } },
+        dismissButton = { TextButton(onClick = { confirmExperiment = false }) { Text("キャンセル") } })
+    Button(onClick = { confirmExperiment = true }, enabled = data.bluetoothConnected && data.diagnostic.ecuVerified &&
+        !data.busy && !data.diagnostic.running && data.communication == CommunicationMode.OBD) { Text("CAN実験モード（最大5秒）") }
     Text("停車中・IG ON・エンジン停止で初回確認。長時間測定はバッテリー消耗に注意。", color = Muted)
     Button(onClick = { controller.selectCommunication(CommunicationMode.CAN) },
-        enabled = data.communication != CommunicationMode.CAN && !data.diagnostic.running) { Text("CAN安全条件を確認") }
-    OutlinedButton(onClick = { controller.selectCommunication(CommunicationMode.OBD) },
+        enabled = data.bluetoothConnected && data.communication != CommunicationMode.CAN && !data.diagnostic.running) { Text("通常CAN監視・安全条件を確認（未検証機器は保留）") }
+    OutlinedButton(onClick = controller::stopCanExperiment,
         enabled = data.communication == CommunicationMode.CAN) { Text("監視停止・通常OBD2へ") }
     Text("選択: ${data.communication} / ${data.status}\n未接続の場合は下の機器一覧から接続してください。", color = Muted)
     val s = data.can.live
+    Text("残り監視時間 ${number(if (data.can.running) (5.0 - s.seconds).coerceIn(0.0, 5.0) else 0.0)}秒 / 状態 ${data.status}", color = Accent)
+    Text(data.diagnostic.results.filter { it.command in listOf("ATCSM1", "ATCRA201") }.joinToString("\n") { "${it.command}: ${it.support.label} / ${it.kind}" }, color = Muted)
+    Text("ATMA: ${data.can.result?.info?.atma ?: if (data.can.running) "監視中（未対応応答なし）" else "未検証"}", color = Muted)
     Text("ID 0x201 / DLC ${data.can.latest?.data?.size ?: "--"}\n" +
         "スマホ到着Hz（監視開始からの平均） ${number(s.hz)}\n" +
         "RPM値変化Hz ${number(s.rpmChangedHz)}\n" +
@@ -343,14 +356,15 @@ private fun CanPane(data: DashboardState, controller: ObdController) {
     Text("参考式: BE[0..1]/4 rpm、(BE[4..5]-10000)/100 km/h\n" +
         "到着周期はCANバス上の送信周期とは異なる場合があります。値変化Hzは同じRPMの繰返しを数えません。\n" +
         "P95は1ms切上げヒストグラム（60秒以上は最終bin）。欠損数はシーケンス番号がないため推定しません。", color = Muted, fontSize = 12.sp)
-    Button(onClick = { controller.startCanBenchmark() }, enabled = data.connected && !data.can.running &&
-        data.communication == CommunicationMode.CAN) { Text(if (data.can.running) "CAN計測中…" else "CAN 30秒計測") }
-    OutlinedButton(onClick = { controller.stopCanBenchmark() }, enabled = data.can.running) { Text("計測停止") }
+    Text("実験開始時にRAWフレームHzの計測を自動開始し、監視停止時に確定します。", color = Muted)
     data.can.result?.let { result ->
         Text("${result.date} / ${result.reason}\n${number(result.stats.seconds)}秒 / ${result.stats.frames}枚 / " +
             "${number(result.stats.hz)}Hz\n平均 ${number(result.stats.meanMs)} / P95 ${number(result.stats.p95Ms)} / 最大 ${number(result.stats.maxMs)} ms\n" +
             "不正 ${result.stats.invalid} / エラー ${result.stats.errors}", color = Accent)
-        OutlinedButton(onClick = { csv = result.csv(); save.launch("CarDashBoard-CAN-v0.3.csv") }) { Text("CAN結果CSV保存") }
+        if (result.stats.frames == 0L) Text("受信ゼロ: ${result.info.atma}。ATMA開始後に0枚でも非対応とは断定できません。フィルタ設定、IG ON・エンジン停止時の0x201送信有無、Bluetooth受信・パーサー、その他通信異常を確認してください。", color = Accent)
+        OutlinedButton(onClick = { csv = result.csv(); save.launch("CarDashBoard-CAN-v0.3.2-summary.csv") }) { Text("CAN結果CSV保存") }
+        OutlinedButton(onClick = { csv = result.rawCsv(); save.launch("CarDashBoard-CAN-v0.3.2-raw.csv") }) { Text("RAW CSV保存（最大10000行）") }
     }
     Text("RAW（単調増加ns、直近35行）\n" + data.can.raw.joinToString("\n"), color = Muted, fontSize = 11.sp)
+    data.can.result?.rows?.lastOrNull()?.let { Text("最終RAW: ${it.ns} ${it.raw}", color = Muted, fontSize = 11.sp) }
 }

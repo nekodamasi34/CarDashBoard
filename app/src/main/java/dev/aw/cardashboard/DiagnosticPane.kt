@@ -43,12 +43,12 @@ fun DiagnosticPane(data: DashboardState, controller: ObdController) {
                 Text("${result.command} / ${result.support.label} / ${result.kind ?: "未実施"}")
                 Text("RAW: " + result.raw.replace("\r", "\\r").replace("\n", "\\n").ifEmpty { "（未取得）" })
             }
-            Text("ATCSM1未対応だけではCAN監視全体の非対応とは判定しません。この版にはサイレント動作を検証したアダプターの登録がないため、実車ATMAは開始しません。")
+            Text("ATCSM1未対応だけではCAN監視全体の非対応とは判定しません。通常監視は保留します。CAN実験モードでは毎回の明示同意と全設定の成功を条件に最大5秒間のATMAを試せます。")
             OutlinedButton(onClick = {
                 (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                     .setPrimaryClip(ClipData.newPlainText("Adapter diagnostics", d.sharedReport()))
             }) { Text("診断結果をコピー（機器名・アドレスを除外）") }
-            OutlinedButton(onClick = { csv = d.csv(); save.launch("CarDashBoard-v0.3.1-diagnostics.csv") }) { Text("診断ログCSV保存") }
+            OutlinedButton(onClick = { csv = d.csv(); save.launch("CarDashBoard-v0.3.2-diagnostics.csv") }) { Text("診断ログCSV保存") }
         }
     }
 }

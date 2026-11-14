@@ -18,8 +18,8 @@ object AdapterDiagnostics {
         val kind = failure ?: when {
             !raw.trimEnd().endsWith('>') -> ResponseKind.INCOMPLETE
             body.isEmpty() -> ResponseKind.EMPTY
-            lines.any { it == "?" } -> ResponseKind.UNSUPPORTED
             lines.any { it.contains("ERROR") || it.contains("UNABLE") || it.contains("BUS BUSY") || it.contains("STOPPED") } -> ResponseKind.ERROR
+            lines == listOf("?") -> ResponseKind.UNSUPPORTED
             lines == listOf("OK") -> if (command in listOf("ATI", "AT@1", "ATDP", "ATDPN")) ResponseKind.UNEXPECTED else ResponseKind.OK
             command == "ATI" && body.contains("ELM327", true) -> ResponseKind.INFORMATION
             command == "AT@1" && body != "OK" -> ResponseKind.INFORMATION
@@ -65,9 +65,9 @@ class CanMonitorSession {
     var phase = MonitorPhase.OBD
         private set
     fun setup() { check(phase == MonitorPhase.OBD); phase = MonitorPhase.SETUP }
-    fun authorize(protocol6: Boolean, silent: CommandSupport, filter: CommandSupport, trustedEvidence: Boolean): Boolean {
+    fun authorize(protocol6: Boolean, silent: CommandSupport, filter: CommandSupport, trustedEvidence: Boolean, experimentalConsent: Boolean = false): Boolean {
         check(phase == MonitorPhase.SETUP)
-        val allowed = protocol6 && filter == CommandSupport.SUPPORTED && trustedEvidence &&
+        val allowed = protocol6 && filter == CommandSupport.SUPPORTED && (trustedEvidence || experimentalConsent) &&
             silent in listOf(CommandSupport.SUPPORTED, CommandSupport.UNSUPPORTED)
         phase = if (allowed) MonitorPhase.MONITORING else MonitorPhase.BLOCKED
         return allowed
