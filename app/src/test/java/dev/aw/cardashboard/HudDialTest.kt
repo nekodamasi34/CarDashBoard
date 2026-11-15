@@ -8,6 +8,7 @@ import kotlin.math.sin
 class HudDialTest {
     @Test fun enlargedSpeedWindowContainsDigitsAndAvoidsPivotAndTicks() {
         assertEquals(.300f, HudDial.SpeedWidth, .001f)
+        assertEquals(.04f, .610f - HudDial.SpeedTop, .001f)
         // Three fixed cells plus both horizontal paddings fit the window.
         assertTrue(3 * .320f * .90f + 2 * .055f < 1f)
         assertTrue(.320f * 1.2f + .112f * 1.2f < HudDial.SpeedHeight / HudDial.SpeedWidth)

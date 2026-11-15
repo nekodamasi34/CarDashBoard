@@ -8,12 +8,13 @@ object CanLiveSafety {
     private const val VERIFIED_NO_TRANSMIT_EVIDENCE = ""
     val continuousAllowed get() = VERIFIED_NO_TRANSMIT_EVIDENCE.isNotBlank()
     val validationSeconds = listOf(5, 15, 30)
-    fun permits(seconds: Int?) = if (seconds == null) continuousAllowed else seconds in validationSeconds
+    fun permits(seconds: Int?, experimentalUnlimitedConsent: Boolean = false) =
+        if (seconds == null) continuousAllowed || experimentalUnlimitedConsent else seconds in validationSeconds
 }
 
 /** User-owned live session, independent of benchmark capture and of Compose lifetime. */
-class CanLiveSession(val limitSeconds: Int?) {
-    init { require(CanLiveSafety.permits(limitSeconds)) }
+class CanLiveSession(val limitSeconds: Int?, val experimentalUnlimitedConsent: Boolean = false) {
+    init { require(CanLiveSafety.permits(limitSeconds, experimentalUnlimitedConsent)) }
     private val lifetime = CanReceiveLifetime(limitSeconds)
     @Volatile var requested = true
         private set

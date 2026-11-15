@@ -30,6 +30,7 @@ data class DashboardState(
     val communication: CommunicationMode = CommunicationMode.OBD,
     val can: CanView = CanView(),
     val canLiveRequested: Boolean = false,
+    val canUnlimitedExperimental: Boolean = false,
     val mode: PollingMode = PollingMode.RPM_PRIORITY,
     val timing: AdaptiveTiming = AdaptiveTiming.ATAT1,
     val appliedMode: PollingMode? = null,
@@ -63,9 +64,9 @@ class ObdController(private val context: Context) {
     private val benchmarks = BenchmarkManager()
     private val canBenchmarks = CanBenchmarkManager()
     @Volatile private var liveSession: CanLiveSession? = null
-    fun startCanLive(address: String, seconds: Int?) {
-        if (state.value.busy || monitoring || state.value.diagnostic.running || diagnosticRequested) return
-        val request = CanLiveSession(seconds)
+    fun startCanLive(address: String, seconds: Int?, experimentalUnlimitedConsent: Boolean = false) {
+        if (liveSession != null || state.value.busy || monitoring || state.value.diagnostic.running || diagnosticRequested) return
+        val request = CanLiveSession(seconds, experimentalUnlimitedConsent)
         connect(address, request)
     }
     fun stopCanLive() {
@@ -258,7 +259,8 @@ class ObdController(private val context: Context) {
             log("Bluetooth接続権限が必要です")
             return
         }
-        _state.update { fresh(it, "Bluetooth接続中…", true).copy(canLiveRequested = liveRequest != null) }
+        _state.update { fresh(it, "Bluetooth接続中…", true).copy(canLiveRequested = liveRequest != null,
+            canUnlimitedExperimental = liveRequest?.let { r -> r.limitSeconds == null && r.experimentalUnlimitedConsent } == true) }
         _state.update { it.copy(diagnostic = AdapterDiagnosticView(adapterName = it.devices.firstOrNull { d -> d.address == address }?.name ?: "選択したアダプター")) }
         log("接続開始")
         val previousOperation = retiringOperation
@@ -685,7 +687,16 @@ class ObdController(private val context: Context) {
 
     private fun reasonForLive(failure: String?) = failure?.let { "CAN停止: $it" } ?: "CAN監視停止（自動再開しません）"
     private fun brief(raw: String) = raw.replace('\r', ' ').replace('\n', ' ').trim().take(100).ifEmpty { "(空応答)" }
-    fun close() { stopCurrent(); scope.cancel() }
+    fun close() {
+        if (!monitoring) { stopCurrent(); scope.cancel(); return }
+        // Keep the owner alive only long enough to restore the prompt and retire the reader.
+        stopCanLive()
+        val retiring = operation
+        scope.launch {
+            try { withTimeout(7500) { retiring?.join() } }
+            finally { stopCurrent(); scope.cancel() }
+        }
+    }
 }
 
 /** Clears live telemetry and adapter acknowledgements, retaining user choices and completed results. */

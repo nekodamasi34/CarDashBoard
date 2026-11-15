@@ -4,6 +4,46 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CanLiveSessionTest {
+    @Test fun experimentalConsentNeverBecomesVerifiedEvidenceOrDefault() {
+        assertTrue(CanLiveSafety.permits(null, experimentalUnlimitedConsent = true))
+        val live = CanLiveSession(null, experimentalUnlimitedConsent = true)
+        live.started(100)
+        listOf(100L, 30_000_000_100L, 604_800_000_000_100L).forEach {
+            assertTrue(live.receiving(it))
+            assertFalse(live.expired(it))
+        }
+        assertThrows(IllegalStateException::class.java) { live.started(200) }
+        live.stop()
+        assertFalse(live.receiving(604_800_000_000_100L))
+        assertFalse(CanLiveSafety.continuousAllowed)
+        assertFalse(CanLiveSafety.permits(null))
+        assertThrows(IllegalArgumentException::class.java) { CanLiveSession(null) }
+        assertFalse(CanLiveSafety.permits(60, experimentalUnlimitedConsent = true))
+    }
+    @Test fun unlimitedReceptionHasBoundedRawAndNoFrameLimit() {
+        val live = CanLiveSession(null, true)
+        val manager = CanBenchmarkManager()
+        live.started(0); manager.connected(0)
+        val days = 604_800_000_000_000L
+        assertEquals(HudStatus.WAITING, DashboardState(communication = CommunicationMode.CAN,
+            bluetoothConnected = true, canLiveRequested = true, canUnlimitedExperimental = true)
+            .toHudState(days).status)
+        repeat(20000) {
+            val frame = CanFrame(0x201, listOf(0x5D, 0xC0, 0, 0, 0x4E, 0x20, 100, 0), days + it)
+            manager.record(frame); manager.rawRow(days + it, frame.hex, frame)
+        }
+        val view = manager.snapshot(days + 20000)
+        assertEquals(20000L, view.live.frames)
+        assertEquals(35, view.raw.size)
+        assertFalse(view.running)
+        assertNull(view.result)
+        assertTrue(live.receiving(days + 20000))
+        val state = DashboardState(communication = CommunicationMode.CAN, bluetoothConnected = true, can = view)
+        assertEquals(HudStatus.LIVE, state.toHudState(days + 20000).status)
+        assertEquals(HudStatus.STALE, state.toHudState(days + 4_000_000_000).status)
+        assertNull(state.copy(communicationError = "Bluetooth切断").toHudState(days).values)
+        assertFalse(state.resetConnection().canUnlimitedExperimental)
+    }
     @Test fun continuousTimingHasNoDeadlineButDoesNotAuthorizeLiveSession() {
         val lifetime = CanReceiveLifetime(null)
         assertFalse(lifetime.receiving(0))

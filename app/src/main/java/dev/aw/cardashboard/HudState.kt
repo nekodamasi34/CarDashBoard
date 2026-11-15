@@ -27,6 +27,6 @@ fun DashboardState.toHudState(nowNs: Long): HudState {
     val values = frame?.let { Rx8CanDecoder().decode(it) }
     if (values == null) return HudState(source, HudStatus.WAITING)
     val age = (nowNs - frame.receivedNs).coerceAtLeast(0)
-    return HudState("CAN", if (CommunicationHealth.fresh(nowNs, frame.receivedNs, HUD_STALE_NS))
+    return HudState("CAN", if (age < HUD_STALE_NS && CommunicationHealth.fresh(nowNs, frame.receivedNs, HUD_STALE_NS))
         HudStatus.LIVE else HudStatus.STALE, values, frame.receivedNs, age, can.live.hz)
 }

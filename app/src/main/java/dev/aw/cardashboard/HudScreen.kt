@@ -5,7 +5,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,38 +36,53 @@ import kotlin.math.roundToInt
 /** Receive time drives freshness; animation never changes telemetry or measured Hz. */
 @Composable
 fun HudScreen(data: DashboardState, onExit: () -> Unit = {},
-    onStart: (String, Int?) -> Unit = { _, _ -> }, onStop: () -> Unit = {},
+    onStart: (String, Int?, Boolean) -> Unit = { _, _, _ -> }, onStop: () -> Unit = {},
     onRefresh: () -> Unit = {}, onDemo: () -> Unit = {}) {
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtimeNanos()) }
     LaunchedEffect(Unit) {
         while (true) { now = SystemClock.elapsedRealtimeNanos(); delay(100) }
     }
     var setup by remember { mutableStateOf(false) }
-    var seconds by remember { mutableIntStateOf(5) }
+    var seconds by remember { mutableStateOf<Int?>(5) }
+    var unlimitedWarning by remember { mutableStateOf(false) }
     var device by remember { mutableStateOf<String?>(null) }
     if (setup) AlertDialog(onDismissRequest = { setup = false }, title = { Text("CANライブ検証") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("VP11の無送信・ACK抑止は未確認です。ATCSM1の応答やATMA受信だけでは証明できません。停車中に短時間から検証してください。上限で停止し、自動再開しません。")
+                Text("VP11の送信・ACK抑止は未確認です。車両のCAN通信に影響する可能性があります。ATCSM1の応答やATMA受信だけでは証明できません。停車中に短時間から検証してください。終了後に自動再開しません。")
                 Row { CanLiveSafety.validationSeconds.forEach { duration ->
                     TextButton(onClick = { seconds = duration }) { Text(if (seconds == duration) "[$duration 秒]" else "$duration 秒") }
                 } }
+                TextButton(onClick = { seconds = null }) {
+                    Text(if (seconds == null) "[無制限（実験用）]" else "無制限（実験用）")
+                }
                 data.devices.forEach { d -> TextButton(onClick = { device = d.address }) {
                     Text((if (device == d.address) "✓ " else "") + d.name + "\n" + d.address)
                 } }
                 TextButton(onClick = onRefresh) { Text("Bluetooth機器を更新") }
             }
         }, confirmButton = { TextButton(enabled = device != null, onClick = {
-            setup = false; device?.let { onStart(it, seconds) }
+            setup = false
+            if (seconds == null) unlimitedWarning = true
+            else device?.let { onStart(it, seconds, false) }
         }) { Text("確認して監視開始") } },
         dismissButton = { TextButton(onClick = { setup = false }) { Text("キャンセル") } })
+    if (unlimitedWarning) AlertDialog(
+        onDismissRequest = { unlimitedWarning = false },
+        title = { Text("無制限CAN監視（実験用）") },
+        text = { Text("VP11のCAN送信・ACK抑止は未検証です。車両のCAN通信に影響する可能性があります。検証済みの連続監視ではありません。受信がなくても時間制限では停止しません。停車中に使用し、手動で停止してください。今回の開始についてリスクを了承しますか？") },
+        confirmButton = { TextButton(onClick = {
+            unlimitedWarning = false
+            device?.let { onStart(it, null, true) }
+        }) { Text("リスクを了承して開始") } },
+        dismissButton = { TextButton(onClick = { unlimitedWarning = false }) { Text("キャンセル") } })
     HudInstruments(data.toHudState(now), onExit, controls = {
         TextButton(enabled = !data.busy && !data.canLiveRequested && !data.can.running,
-            onClick = { onRefresh(); setup = true }) { Text("CAN開始", color = HudColors.White) }
+            onClick = { seconds = 5; onRefresh(); setup = true }) { Text("CAN開始", color = HudColors.White) }
         TextButton(onClick = onStop) { Text("停止", color = HudColors.White) }
         TextButton(enabled = !data.busy && !data.canLiveRequested && !data.can.running,
             onClick = onDemo) { Text("DEMO", color = HudColors.Muted) }
-    }, detail = data.status)
+    }, detail = (if (data.canUnlimitedExperimental) "無制限（実験用） · " else "") + data.status)
 }
 
 @Composable
@@ -150,18 +164,19 @@ fun TachometerGauge(rpm: Float?, speedKmh: Double? = null,
     }
 }
 
-/** Recessed digital window in the lower right of the tachometer. */
+/** Transparent digital lettering in the lower right of the tachometer. */
 @Composable
 fun SpeedHud(speedKmh: Double?, modifier: Modifier = Modifier) {
-    BoxWithConstraints(modifier.background(Color(0xFF0E0E0D))
-        .border(.6.dp, Color(0xFF35332E))) {
+    BoxWithConstraints(modifier) {
         val windowWidth = maxWidth
         val unitSize = with(LocalDensity.current) { (windowWidth * .112f).toSp() }
         Column(Modifier.fillMaxSize().padding(horizontal = windowWidth * .055f),
             horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.Center) {
             HudDigits(speedKmh?.coerceAtLeast(0.0)?.roundToInt()?.toString() ?: "--",
                 3, windowWidth * .320f, HudColors.White, "km/h")
-            Text("km/h", color = HudColors.Muted, fontSize = unitSize, lineHeight = unitSize * 1.2f)
+            Text("km/h", color = HudColors.Muted, fontFamily = HudNumberFont,
+                fontSize = unitSize, lineHeight = unitSize * 1.2f,
+                style = TextStyle(shadow = Shadow(Color.Black, Offset(0f, 1f), 3f)))
         }
     }
 }
@@ -238,3 +253,14 @@ private fun HudErrorPreview() { HudInstruments(HudState("CAN", HudStatus.ERROR))
 @Composable private fun Rpm10000Preview() = RpmPreview(10000f)
 @Composable private fun RpmPreview(rpm: Float) =
     HudInstruments(HudState("DEMO", HudStatus.DEMO, Rx8CanValues(rpm, 0.0, 0f)))
+
+@Preview(name = "One digit speed / half accelerator", widthDp = 320, heightDp = 480, fontScale = 2f)
+@Composable private fun SingleDigitPreview() =
+    HudInstruments(HudState("DEMO", HudStatus.DEMO, Rx8CanValues(1000f, 7.0, 50f)))
+
+@Preview(name = "Three digit speed / full accelerator", widthDp = 568, heightDp = 320, fontScale = 2f)
+@Composable private fun TripleDigitPreview() =
+    HudInstruments(HudState("DEMO", HudStatus.DEMO, Rx8CanValues(8500f, 123.0, 100f)))
+
+@Preview(name = "Missing telemetry", widthDp = 320, heightDp = 480, fontScale = 2f)
+@Composable private fun MissingPreview() = HudInstruments(HudState("CAN", HudStatus.WAITING))
