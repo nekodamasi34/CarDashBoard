@@ -6,6 +6,21 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 class HudDialTest {
+    @Test fun enlargedSpeedWindowContainsDigitsAndAvoidsPivotAndTicks() {
+        assertEquals(.300f, HudDial.SpeedWidth, .001f)
+        // Three fixed cells plus both horizontal paddings fit the window.
+        assertTrue(3 * .320f * .90f + 2 * .055f < 1f)
+        assertTrue(.320f * 1.2f + .112f * 1.2f < HudDial.SpeedHeight / HudDial.SpeedWidth)
+        assertTrue(HudDial.SpeedTop > HudDial.PivotY + HudDial.RadiusFraction * .108f)
+        for (tick in 0..100) {
+            val a = Math.toRadians(HudDial.angle(tick * 100f).toDouble())
+            val x = .5 + cos(a) * HudDial.RadiusFraction * .832f
+            val y = .5 + sin(a) * HudDial.RadiusFraction * .832f
+            assertFalse("tick $tick overlaps speed window", x > HudDial.SpeedLeft &&
+                x < HudDial.SpeedLeft + HudDial.SpeedWidth && y > HudDial.SpeedTop &&
+                y < HudDial.SpeedTop + HudDial.SpeedHeight)
+        }
+    }
     @Test fun oemAnglesAndRedline() {
         listOf(0f to 90f, 5000f to 201f, 8000f to 282f, 8500f to 295.5f,
             10000f to 335f, -100f to 90f, 12000f to 335f).forEach { (rpm, angle) ->

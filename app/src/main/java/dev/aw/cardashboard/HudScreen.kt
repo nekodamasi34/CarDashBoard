@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +20,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -75,7 +77,7 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
     val active = state.status == HudStatus.LIVE || state.status == HudStatus.DEMO
     Column(Modifier.fillMaxSize().background(HudColors.Background)
         .windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             // Full touch target, with only a small, subdued chevron drawn inside.
             TextButton(onClick = onExit, modifier = Modifier.size(48.dp),
                 contentPadding = PaddingValues(0.dp)) {
@@ -83,7 +85,7 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
                     modifier = Modifier.clearAndSetSemantics { contentDescription = "HUDを閉じる" })
             }
             controls()
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(12.dp))
             Text(state.status.name, color = when (state.status) {
                 HudStatus.ERROR -> HudColors.Needle
                 HudStatus.STALE, HudStatus.DEMO -> HudColors.Warning
@@ -95,17 +97,18 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
         Text(detail, color = HudColors.Muted, fontSize = 10.sp, maxLines = 1,
             modifier = Modifier.padding(horizontal = 12.dp))
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            // Reserve a footer before choosing a square that fits either orientation.
-            val dialSize = minOf(maxWidth * .96f, (maxHeight - 62.dp).coerceAtLeast(0.dp))
+            // A separate bottom instrument owns its space in both orientations.
+            val dialSize = minOf(maxWidth * .96f, (maxHeight - 86.dp).coerceAtLeast(0.dp))
+            val acceleratorWidth = minOf(maxWidth * .88f, 480.dp)
             Column(Modifier.fillMaxSize().alpha(if (active) 1f else .42f),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center) {
-                Box(Modifier.fillMaxWidth().height(dialSize), contentAlignment = Alignment.Center) {
-                    PodSilhouettes(dialSize)
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().height(dialSize)) { PodSilhouettes(dialSize) }
                     TachometerGauge(state.values?.rpm, state.values?.speedKmh, Modifier.size(dialSize))
                 }
                 AcceleratorHud(state.values?.acceleratorPercent,
-                    Modifier.padding(top = 12.dp, bottom = 16.dp).width(minOf(dialSize * .68f, 340.dp)))
+                    Modifier.padding(top = 12.dp, bottom = 20.dp).width(acceleratorWidth))
             }
         }
     }
@@ -135,10 +138,11 @@ fun TachometerGauge(rpm: Float?, speedKmh: Double? = null,
         val dialWidth = maxWidth
         TachometerFace(needle, Modifier.fillMaxSize())
         Column(Modifier.offset(x = dialWidth * HudDial.RpmLeft, y = dialWidth * HudDial.RpmTop)
-            .size(dialWidth * HudDial.RpmWidth, dialWidth * HudDial.RpmHeight)
-            .background(HudColors.Face),
+            .size(dialWidth * HudDial.RpmWidth, dialWidth * HudDial.RpmHeight),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            HudDigits(rpm?.roundToInt()?.toString() ?: "--", 5, dialWidth * .040f,
+            val rpmText = rpm?.roundToInt()?.toString() ?: "--"
+            // Draw the needle first, then legible glyphs with a thin shadow, never a masking panel.
+            HudDigits(rpmText, rpmText.length, dialWidth * .040f,
                 if (HudDial.rpmWarning(rpm ?: 0f)) HudColors.Needle else HudColors.White, "rpm")
         }
         SpeedHud(speedKmh, Modifier.offset(x = dialWidth * HudDial.SpeedLeft, y = dialWidth * HudDial.SpeedTop)
@@ -172,7 +176,8 @@ private fun HudDigits(value: String, slots: Int, digitSize: Dp, color: Color, un
             Text(char.toString(), modifier = Modifier.width(digitSize * .90f),
                 color = color, fontFamily = HudNumberFont, fontSize = fontSize,
                 lineHeight = fontSize * 1.2f,
-                style = TextStyle(fontFeatureSettings = "tnum"),
+                style = TextStyle(fontFeatureSettings = "tnum",
+                    shadow = Shadow(Color.Black, Offset(0f, 1f), 3f)),
                 textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
         }
     }
@@ -182,18 +187,18 @@ private fun HudDigits(value: String, slots: Int, digitSize: Dp, color: Color, un
 fun AcceleratorHud(percent: Float?, modifier: Modifier = Modifier) {
     val fraction by animateFloatAsState((percent ?: 0f).coerceIn(0f, 100f) / 100f,
         tween(120), label = "accelerator bar")
-    val labelSize = with(LocalDensity.current) { 9.dp.toSp() }
-    val unitSize = with(LocalDensity.current) { 10.dp.toSp() }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    val labelSize = with(LocalDensity.current) { 13.5.dp.toSp() }
+    val unitSize = with(LocalDensity.current) { 15.dp.toSp() }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("ACCEL", color = HudColors.Muted, fontSize = labelSize,
+            Text("ACCEL", color = HudColors.Muted, fontSize = labelSize, fontFamily = HudNumberFont,
                 lineHeight = labelSize * 1.2f, letterSpacing = 1.5.sp)
             Spacer(Modifier.weight(1f))
             HudDigits(percent?.coerceIn(0f, 100f)?.roundToInt()?.toString() ?: "--",
-                3, 13.dp, HudColors.White, "%")
-            Text(" %", color = HudColors.Muted, fontSize = unitSize, lineHeight = unitSize * 1.2f)
+                3, 19.5.dp, HudColors.White, "%")
+            Text(" %", color = HudColors.Muted, fontSize = unitSize, fontFamily = HudNumberFont, lineHeight = unitSize * 1.2f)
         }
-        Canvas(Modifier.fillMaxWidth().height(2.dp)) {
+        Canvas(Modifier.fillMaxWidth().height(6.dp)) {
             drawRect(Color(0xFF29282A))
             drawRect(HudColors.White.copy(alpha = .65f), size = Size(size.width * fraction, size.height))
         }
@@ -202,6 +207,8 @@ fun AcceleratorHud(percent: Float?, modifier: Modifier = Modifier) {
 
 @Preview(name = "HUD portrait DEMO", widthDp = 393, heightDp = 851, showBackground = true)
 @Preview(name = "HUD landscape DEMO", widthDp = 851, heightDp = 393, showBackground = true)
+@Preview(name = "HUD compact landscape large text", widthDp = 568, heightDp = 320, fontScale = 2f)
+@Preview(name = "HUD compact portrait large text", widthDp = 320, heightDp = 480, fontScale = 2f)
 @Composable
 private fun HudDemoPreview() {
     HudInstruments(HudState("DEMO", HudStatus.DEMO, Rx8CanValues(7250f, 86.0, 32f)))

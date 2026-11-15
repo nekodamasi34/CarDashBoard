@@ -1,7 +1,8 @@
 package dev.aw.cardashboard
 
 import android.graphics.Paint
-import android.graphics.Typeface
+import androidx.core.content.res.ResourcesCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -12,15 +13,16 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import kotlin.math.cos
+import kotlin.math.abs
 import kotlin.math.sin
 
 @Composable
 internal fun TachometerFace(rpm: Float, modifier: Modifier) {
-    val lettering = remember {
+    val context = LocalContext.current
+    val lettering = remember(context) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textAlign = Paint.Align.CENTER
-            // Analog scale retains understated OEM-like lettering, not digital numerals.
-            typeface = Typeface.create("sans-serif-condensed", Typeface.NORMAL)
+            typeface = ResourcesCompat.getFont(context, R.font.orbitron)
         }
     }
     Canvas(modifier) {
@@ -69,8 +71,16 @@ private fun DrawScope.drawGraduations(center: Offset, radius: Float, paint: Pain
         if (major) {
             paint.color = HudColors.White.toArgb()
             paint.textSize = radius * HudDial.NumeralSize
+            val numeral = (tick / 10).toString()
+            // Fit the glyph rectangle radially inside the ticks without moving its center.
+            // This also handles Orbitron's wider two-digit 10 at the diagonal end of the scale.
+            val radians = Math.toRadians(angle.toDouble())
+            val radialExtent = (paint.measureText(numeral) * abs(cos(radians)) +
+                (paint.descent() - paint.ascent()) * abs(sin(radians))) / 2
+            val clearance = radius * (.832f - HudDial.NumeralRadius - .009f)
+            if (radialExtent > clearance) paint.textSize *= (clearance / radialExtent).toFloat()
             val p = point(angle, HudDial.NumeralRadius)
-            drawContext.canvas.nativeCanvas.drawText((tick / 10).toString(), p.x,
+            drawContext.canvas.nativeCanvas.drawText(numeral, p.x,
                 p.y - (paint.ascent() + paint.descent()) / 2, paint)
         }
     }

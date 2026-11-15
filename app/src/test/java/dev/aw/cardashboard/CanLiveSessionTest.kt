@@ -4,6 +4,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CanLiveSessionTest {
+    @Test fun continuousTimingHasNoDeadlineButDoesNotAuthorizeLiveSession() {
+        val lifetime = CanReceiveLifetime(null)
+        assertFalse(lifetime.receiving(0))
+        lifetime.start(100)
+        listOf(100L, 30_000_000_100L, 86_400_000_000_100L, 604_800_000_000_100L).forEach {
+            assertTrue(lifetime.receiving(it))
+            assertFalse(lifetime.expired(it))
+        }
+        assertThrows(IllegalStateException::class.java) { lifetime.start(200) }
+        assertFalse(CanLiveSafety.permits(null))
+    }
+    @Test fun allValidationDeadlinesAndStopBeforeStart() {
+        CanLiveSafety.validationSeconds.forEach { seconds ->
+            val live = CanLiveSession(seconds)
+            assertFalse(live.receiving(0))
+            live.started(100)
+            val end = 100 + seconds * 1_000_000_000L
+            assertTrue(live.receiving(end - 1))
+            assertFalse(live.receiving(end))
+            live.stop()
+            assertFalse(live.receiving(100))
+        }
+    }
     @Test fun unlimitedAndUnapprovedDurationsAreBlocked() {
         assertFalse(CanLiveSafety.continuousAllowed)
         listOf(null, 0, -1, 60).forEach { seconds ->

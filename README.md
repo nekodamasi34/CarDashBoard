@@ -1,16 +1,16 @@
-# CarDashBoard v0.4.3
+# CarDashBoard v0.4.4
 
 Mazda RX-8（2005年式 前期 Type S 6MT）向けAndroid/Kotlin/Jetpack Composeアプリ。
 Bluetooth Classic SPP接続のELM327互換アダプターを使用します。
-Application ID: `dev.aw.cardashboard` / versionCode: `9`。
+Application ID: `dev.aw.cardashboard` / versionCode: `10`。
 
-## CAN HUD（v0.4.3）
+## CAN HUD（v0.4.4）
 
 HUD専用の没入表示でステータスバーとナビゲーションバーを隠します。左上の「‹」またはAndroidの戻る操作で通常画面へ戻り、システムバーを復元します。端からのスワイプでバーを一時表示できます。回転時のHUDページ保持とフォーカス復帰時の没入表示再適用に対応。HUD内のCAN開始・停止・DEMO操作に対応。画面を開くだけでは接続しません。
 
 中央の大タコを主役に、左右の暗いポッド外装で3連メーターの雰囲気を表現（未計測の水温・燃料のダミー表示なし）。黒い文字盤、0〜10の白い数字、100rpm刻みの白ドットと500/1000rpmの短線、8500〜10000rpmの赤帯、細い赤橙の針、金属の縁と奥行きのある多重ベゼルでRX-8前期純正の雰囲気を強めました。単位はx1000r/min。RPM数値の警告色は従来どおり8500rpm以上です。
 
-RPM・車速・アクセル数値にHUD専用のOrbitronを同梱・適用。等幅セルで桁位置を固定し、通常UIのフォントは維持します。縦横とも速度をタコ内右下のデジタル窓（km/h、0または欠測時--）、アクセルを下部の細い白バーに配置。説明・受信時刻・Hz・CAN/SIM補助文字を省略し、状態名と通信状態を上端に表示します。
+タコ外周0〜10、RPM・車速・ACCELラベル・アクセル数値と%にHUD専用のOrbitronを同梱・適用。等幅セルで桁位置を固定し、通常UIのフォントは維持します。縦横とも速度をタコ内右下のデジタル窓（km/h、0または欠測時--）、アクセルを独立した画面下部の太い白バーに配置。速度窓と数字は約1.5倍、アクセルの数値・ラベル・%も約1.5倍。RPM数値は背景なし・文字影付きで水平中央に表示。説明・受信時刻・Hz・CAN/SIM補助文字を省略し、状態名と通信状態を上端に表示します。
 
 画面上部の横スクロールタブから「HUD」を選択。黒い文字盤・白い目盛り・オレンジの針をCanvasで描く、RX-8前期の雰囲気を参考にした独自タコメーターです。外部画像は使用しません。
 0〜10000rpmのアナログ目盛り、RPM数値・タコ内デジタル車速・アクセル開度の数値とバーを表示します。
@@ -19,7 +19,7 @@ CAN 0x201の8バイトフレームを既存Rx8CanDecoderでデコードします
 HUDのCAN開始で機器と5/15/30秒の検証時間を選択します。既存の5秒ベンチマークとは独立し、終了後に自動再開しません。無送信動作の確認根拠がないため、無制限監視はCanLiveSafetyで禁止しています。
 
 受信時刻は単調時計で保持し、更新から3秒を超えるとSTALEと減光で通知します。RPM 0も正常な受信値です。通信エラー・未接続・未受信・DEMOを区別し、CAN実測受信Hzを内部状態に保持します（HUD常時表示は省略）。針140ms・アクセルバー120msの補間は描画専用で、実測値・受信時刻・Hzを書き換えません。デモ値は独立した状態で3項目とも変化します。
-実装と確認方法は [v0.4.3 Release Notes](RELEASE_NOTES-v0.4.3.md)、検証結果は [ソフトウェア検証](BUILD_VERIFICATION-v0.4.3.md) を参照。Orbitronは [Google Fonts](https://github.com/google/fonts/tree/main/ofl/orbitron) のSIL OFLフォントで、ライセンスをAPK内assets/licenses/Orbitron-OFL.txtに同梱しています。
+実装と確認方法は [v0.4.4 Release Notes](RELEASE_NOTES-v0.4.4.md)、検証結果は [ソフトウェア検証](BUILD_VERIFICATION-v0.4.4.md) を参照。Orbitronは [Google Fonts](https://github.com/google/fonts/tree/main/ofl/orbitron) のSIL OFLフォントで、ライセンスをAPK内assets/licenses/Orbitron-OFL.txtに同梱しています。
 
 通常OBD2のRPM・車速・水温、3ポーリングモード、ATAT1/2、30秒ベンチマーク、CSV、通信ログ、デモを維持しています。
 CAN ID 0x201のRAW解析、受信周期・Hz計算とCANベンチマークの処理も維持しています。換算式は未検証の参考値です。
@@ -58,6 +58,7 @@ Android StudioのJDKとAndroid SDK 36.1を使用します。
 
 ## 変更履歴
 
+- v0.4.4: 外周数字をOrbitron化、速度窓と数字を1.5倍、RPM背景撤去、下部アクセル拡大。連続監視の内部時間管理と試験を整備（安全保護を維持）。
 - v0.4.3: HUDのRX-8前期純正寄せ強化、HUD数値にOrbitron、白ドット目盛り・多重ベゼル、タコ内右下の速度窓、控えめな下部アクセル、回転・再表示対応。
 - v0.4.1: HUD文字盤再デザイン、専用フルスクリーン、等幅数字、縦横レイアウト・状態表示の整理。
 - v0.4: CANベースHUD、RX-8風タコメーター、RPM・車速・アクセル表示、鮮度通知と独立デモ値。
@@ -66,4 +67,4 @@ Android StudioのJDKとAndroid SDK 36.1を使用します。
 - v0.3: CAN直接受信・0x201解析、CANベンチマーク、通信高速化検証。
 - v0.2: 3種類のポーリング、ATAT1/2、OBD2ベンチマーク。
 
-インストール方法・未検証事項は [Release Notes](RELEASE_NOTES-v0.4.3.md) を参照してください。
+インストール方法・未検証事項は [Release Notes](RELEASE_NOTES-v0.4.4.md) を参照してください。

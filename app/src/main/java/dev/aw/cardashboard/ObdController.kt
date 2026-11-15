@@ -252,6 +252,8 @@ class ObdController(private val context: Context) {
         manualStop = false
         val id = session
         if (!hasConnectPermission()) {
+            liveRequest?.stop()
+            liveSession = null
             _state.update { fresh(it, "接続エラー: Bluetooth接続権限が必要です").copy(communicationError = "Bluetooth接続権限が必要です") }
             log("Bluetooth接続権限が必要です")
             return
@@ -498,8 +500,8 @@ class ObdController(private val context: Context) {
                         if (live != null) {
                             if (!live.receiving(SystemClock.elapsedRealtimeNanos())) break
                         } else if (CanExperiment(started).expired(SystemClock.elapsedRealtimeNanos())) break
-                        val remainingMs = (CanExperiment.DURATION_NS - (SystemClock.elapsedRealtimeNanos() - started)) / 1_000_000
-                        delay(if (live != null) 20 else minOf(20, remainingMs.coerceAtLeast(1)))
+                        // Live lifetime is independent of the five-second benchmark deadline.
+                        delay(20)
                     }
                     // Exactly one CR; no printable character followed by CR that could become a command.
                     stoppingMonitor = true

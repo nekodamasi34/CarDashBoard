@@ -27,10 +27,10 @@ internal object HudDial {
     const val RadiusFraction = .478f
     const val NumeralRadius = .765f
     const val NumeralSize = .15f
-    const val SpeedLeft = .535f
-    const val SpeedTop = .615f
-    const val SpeedWidth = .200f
-    const val SpeedHeight = .137f
+    const val SpeedLeft = .550f
+    const val SpeedTop = .610f
+    const val SpeedWidth = .300f
+    const val SpeedHeight = .205f
     const val RpmLeft = .380f
     const val RpmTop = .394f
     const val RpmWidth = .240f
