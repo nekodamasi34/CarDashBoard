@@ -15,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -88,7 +87,6 @@ fun HudScreen(data: DashboardState, onExit: () -> Unit = {},
 @Composable
 private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
     controls: @Composable () -> Unit = {}, detail: String = "") {
-    val active = state.status == HudStatus.LIVE || state.status == HudStatus.DEMO
     Column(Modifier.fillMaxSize().background(HudColors.Background)
         .windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -100,7 +98,8 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
             }
             controls()
             Spacer(Modifier.width(12.dp))
-            Text(state.status.name, color = when (state.status) {
+            Text(if (state.status == HudStatus.STALE) state.status.label
+                else if (state.staleCandidate) "LIVE · データが古い（判定待ち）" else state.status.name, color = when (state.status) {
                 HudStatus.ERROR -> HudColors.Needle
                 HudStatus.STALE, HudStatus.DEMO -> HudColors.Warning
                 HudStatus.LIVE -> HudColors.White
@@ -114,7 +113,7 @@ private fun HudInstruments(state: HudState, onExit: () -> Unit = {},
             // A separate bottom instrument owns its space in both orientations.
             val dialSize = minOf(maxWidth * .96f, (maxHeight - 86.dp).coerceAtLeast(0.dp))
             val acceleratorWidth = minOf(maxWidth * .88f, 480.dp)
-            Column(Modifier.fillMaxSize().alpha(if (active) 1f else .42f),
+            Column(Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {

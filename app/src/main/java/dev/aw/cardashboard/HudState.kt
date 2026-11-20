@@ -11,7 +11,8 @@ enum class HudStatus(val label: String) {
 
 data class HudState(
     val source: String, val status: HudStatus, val values: Rx8CanValues? = null,
-    val lastUpdatedNs: Long? = null, val ageNs: Long? = null, val measuredHz: Double? = null
+    val lastUpdatedNs: Long? = null, val ageNs: Long? = null, val measuredHz: Double? = null,
+    val dataFresh: Boolean = false, val staleCandidate: Boolean = false
 )
 
 /** Monotonic receive time only: animation frames never update telemetry or measured Hz. */
@@ -27,6 +28,8 @@ fun DashboardState.toHudState(nowNs: Long): HudState {
     val values = frame?.let { Rx8CanDecoder().decode(it) }
     if (values == null) return HudState(source, HudStatus.WAITING)
     val age = (nowNs - frame.receivedNs).coerceAtLeast(0)
-    return HudState("CAN", if (age < HUD_STALE_NS && CommunicationHealth.fresh(nowNs, frame.receivedNs, HUD_STALE_NS))
-        HudStatus.LIVE else HudStatus.STALE, values, frame.receivedNs, age, can.live.hz)
+    val fresh = nowNs >= frame.receivedNs && age < HUD_STALE_NS
+    val stale = nowNs < frame.receivedNs || hudDisplayStale == true || age >= HUD_STALE_NS + HUD_STALE_DELAY_NS
+    return HudState("CAN", if (stale) HudStatus.STALE else HudStatus.LIVE,
+        values, frame.receivedNs, age, can.live.hz, fresh, !fresh && !stale)
 }

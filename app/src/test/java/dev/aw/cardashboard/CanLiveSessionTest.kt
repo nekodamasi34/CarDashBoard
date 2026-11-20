@@ -40,7 +40,7 @@ class CanLiveSessionTest {
         assertTrue(live.receiving(days + 20000))
         val state = DashboardState(communication = CommunicationMode.CAN, bluetoothConnected = true, can = view)
         assertEquals(HudStatus.LIVE, state.toHudState(days + 20000).status)
-        assertEquals(HudStatus.STALE, state.toHudState(days + 4_000_000_000).status)
+        assertEquals(HudStatus.STALE, state.toHudState(days + 5_000_000_000).status)
         assertNull(state.copy(communicationError = "Bluetooth切断").toHudState(days).values)
         assertFalse(state.resetConnection().canUnlimitedExperimental)
     }
@@ -104,7 +104,7 @@ class CanLiveSessionTest {
         assertEquals(6000f, hud.values!!.rpm, 0f)
         assertEquals(100.0, hud.values.speedKmh, 0.0)
         assertEquals(50f, hud.values.acceleratorPercent, 0f)
-        assertEquals(HudStatus.STALE, state.toHudState(4_000_000_000).status)
+        assertEquals(HudStatus.STALE, state.toHudState(5_000_000_000).status)
         assertNull(state.copy(communicationError = "CAN ERROR").toHudState(100).values)
         manager.disconnected(200)
         assertNull(manager.snapshot(200).latest)

@@ -16,6 +16,7 @@ object MonitorLine {
             s == "?" -> "ATMA未対応 (?)"
             "BUFFER FULL" in s -> "BUFFER FULL"
             "CAN ERROR" in s -> "CAN ERROR"
+            "DATA ERROR" in s -> "DATA ERROR（ATCAF0適用後の受信異常・値不採用）: $s"
             "STOPPED" in s -> if (stopping) null else "予期しないSTOPPED"
             listOf("ERROR", "UNABLE", "BUS BUSY", "NO DATA").any { it in s } -> s
             else -> null

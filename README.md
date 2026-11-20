@@ -1,10 +1,10 @@
-# CarDashBoard v0.4.5
+# CarDashBoard v0.4.6
 
 Mazda RX-8（2005年式 前期 Type S 6MT）向けAndroid/Kotlin/Jetpack Composeアプリ。
 Bluetooth Classic SPP接続のELM327互換アダプターを使用します。
-Application ID: `dev.aw.cardashboard` / versionCode: `11`。
+Application ID: `dev.aw.cardashboard` / versionCode: `12`。
 
-## CAN HUD（v0.4.5）
+## CAN HUD（v0.4.6）
 
 HUD専用の没入表示でステータスバーとナビゲーションバーを隠します。左上の「‹」またはAndroidの戻る操作で通常画面へ戻り、システムバーを復元します。端からのスワイプでバーを一時表示できます。回転時のHUDページ保持とフォーカス復帰時の没入表示再適用に対応。HUD内のCAN開始・停止・DEMO操作に対応。画面を開くだけでは接続しません。
 
@@ -18,8 +18,8 @@ HUD専用の没入表示でステータスバーとナビゲーションバー�
 CAN 0x201の8バイトフレームを既存Rx8CanDecoderでデコードします。RPM=Byte0-1/4、車速=(Byte4-5−10000)/100（負値は0）、アクセル=Byte6/2（0〜100%）。HUDは通常OBD値へ自動代替しません。OBD2選択時はCAN未受信を表示し、従来メーターでは通常OBD値を利用できます。
 HUDのCAN開始で機器と5/15/30秒または「無制限（実験用）」を選択します。初期選択は毎回5秒です。無制限は追加警告でリスクを了承した今回の開始だけ許可します。VP11のCAN送信・ACK抑止は未検証で、車両CAN通信に影響する可能性があります。検証済み連続監視許可とは分離し、検証根拠は未登録のままです。無制限は未受信時も時間・フレーム数上限で停止せず、手動停止・切断・通信異常・Activity破棄で終了します。既存5秒ベンチマークと独立し、終了後に自動再接続しません。HUD上端に無制限実験中と表示します。RAW表示は35件、通常ログは35件、CSV捕捉は既存実験のみ最大10000件です。
 
-受信時刻は単調時計で保持し、更新から3秒以上でSTALEと減光で通知します。RPM 0も正常な受信値です。通信エラー・未接続・未受信・DEMOを区別し、CAN実測受信Hzを内部状態に保持します（HUD常時表示は省略）。針140ms・アクセルバー120msの補間は描画専用で、実測値・受信時刻・Hzを書き換えません。デモ値は独立した状態で3項目とも変化します。
-実装と確認方法は [v0.4.5 Release Notes](RELEASE_NOTES-v0.4.5.md)、検証結果は [ソフトウェア検証](BUILD_VERIFICATION-v0.4.5.md) を参照。Orbitronは [Google Fonts](https://github.com/google/fonts/tree/main/ofl/orbitron) のSIL OFLフォントで、ライセンスをAPK内assets/licenses/Orbitron-OFL.txtに同梱しています。
+受信時刻は単調時計で保持し、3秒でデータ鮮度を失います。さらに1秒継続して4秒でSTALE表示を確定します。猶予中も古いデータと明示し、新鮮な実測値には扱いません。STALEからのLIVE復帰は有効な0x201の500ms継続受信後です（250ms超の受信間隔で復帰判定をリセット）。最後の実測値を保持し、タコ全体の減光を廃止して上部表示で通知します。通信ERROR・切断は即時欠測です。RPM 0も正常な受信値です。通信エラー・未接続・未受信・DEMOを区別し、CAN実測受信Hzを内部状態に保持します（HUD常時表示は省略）。針140ms・アクセルバー120msの補間は描画専用で、実測値・受信時刻・Hzを書き換えません。デモ値は独立した状態で3項目とも変化します。
+実装と確認方法は [v0.4.6 Release Notes](RELEASE_NOTES-v0.4.6.md)、検証結果は [ソフトウェア検証](BUILD_VERIFICATION-v0.4.6.md) を参照。Orbitronは [Google Fonts](https://github.com/google/fonts/tree/main/ofl/orbitron) のSIL OFLフォントで、ライセンスをAPK内assets/licenses/Orbitron-OFL.txtに同梱しています。
 
 通常OBD2のRPM・車速・水温、3ポーリングモード、ATAT1/2、30秒ベンチマーク、CSV、通信ログ、デモを維持しています。
 CAN ID 0x201のRAW解析、受信周期・Hz計算とCANベンチマークの処理も維持しています。換算式は未検証の参考値です。
@@ -35,6 +35,9 @@ PID取得を停止し、Bluetooth再接続・ELM初期化後、ATI / AT@1 / ATDP
 診断のコピー・CSVにはBluetoothアドレスとアプリで表示した機器名を含めません。RAWにはアダプター自身の識別情報が含まれ得るので共有前に内容を確認してください。
 
 ## CAN監視
+
+通常OBD2の0100成功後のみ、ATSP6 / ATE0 / ATL0 / ATS0 / ATH1 / ATCAF0 / ATD1を適用し、各OK応答を必須にします。ATCAF0は診断結果とRAW付き通信ログへ記録し、未対応・異常・切断時はATMAを開始しません。ATCRA201フィルタを維持します。DATA ERROR付きフレームは値に採用せず、RAWと原因を残して停止します。CAN ERROR・BUFFER FULLも停止条件です。通常OBDは毎回ATZから初期化します。
+
 
 ATCSM1の `?` はそのコマンドの未対応であり、CAN監視全体の非対応とは判定しません。
 ERROR、タイムアウト、空・不完全応答などは対応状況不明の応答異常です。
@@ -58,6 +61,8 @@ Android StudioのJDKとAndroid SDK 36.1を使用します。
 
 ## 変更履歴
 
+- v0.4.6: ATCAF0必須化、DATA ERRORのRAW記録、STALE表示の1秒猶予と500ms安定復帰、HUD全体の減光廃止。実機未検証。
+
 - v0.4.5: 毎回同意のCAN無制限実験、速度表示を上へ4%移動、km/hのOrbitron化、速度の背景・枠線撤去。実機通信・描画は未検証。
 - v0.4.4: 外周数字をOrbitron化、速度窓と数字を1.5倍、RPM背景撤去、下部アクセル拡大。連続監視の内部時間管理と試験を整備（安全保護を維持）。
 - v0.4.3: HUDのRX-8前期純正寄せ強化、HUD数値にOrbitron、白ドット目盛り・多重ベゼル、タコ内右下の速度窓、控えめな下部アクセル、回転・再表示対応。
@@ -68,4 +73,4 @@ Android StudioのJDKとAndroid SDK 36.1を使用します。
 - v0.3: CAN直接受信・0x201解析、CANベンチマーク、通信高速化検証。
 - v0.2: 3種類のポーリング、ATAT1/2、OBD2ベンチマーク。
 
-インストール方法・未検証事項は [Release Notes](RELEASE_NOTES-v0.4.4.md) を参照してください。
+インストール方法・未検証事項は [Release Notes](RELEASE_NOTES-v0.4.6.md) を参照してください。

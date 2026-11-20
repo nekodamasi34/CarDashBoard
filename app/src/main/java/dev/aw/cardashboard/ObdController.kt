@@ -29,6 +29,7 @@ data class DashboardState(
     val diagnostic: AdapterDiagnosticView = AdapterDiagnosticView(),
     val communication: CommunicationMode = CommunicationMode.OBD,
     val can: CanView = CanView(),
+    val hudDisplayStale: Boolean? = null,
     val canLiveRequested: Boolean = false,
     val canUnlimitedExperimental: Boolean = false,
     val mode: PollingMode = PollingMode.RPM_PRIORITY,
@@ -63,6 +64,7 @@ class ObdController(private val context: Context) {
     private val lock = Any()
     private val benchmarks = BenchmarkManager()
     private val canBenchmarks = CanBenchmarkManager()
+    private val hudReception = HudReception()
     @Volatile private var liveSession: CanLiveSession? = null
     fun startCanLive(address: String, seconds: Int?, experimentalUnlimitedConsent: Boolean = false) {
         if (liveSession != null || state.value.busy || monitoring || state.value.diagnostic.running || diagnosticRequested) return
@@ -111,8 +113,8 @@ class ObdController(private val context: Context) {
                     val now = SystemClock.elapsedRealtimeNanos()
                     val can = canBenchmarks.snapshot(now)
                     if (monitoring) {
-                        val alive = !manualStop && CommunicationHealth.fresh(now, can.latest?.receivedNs)
-                        _state.update { it.copy(can = can, connected = alive, busy = false,
+                        val alive = !manualStop && can.latest?.receivedNs?.let { now - it in 0 until HUD_STALE_NS } == true
+                        _state.update { it.copy(can = can, hudDisplayStale = hudReception.tick(now), connected = alive, busy = false,
                             rpm = if (alive) can.values?.rpm else null,
                             speedKmh = if (alive) can.values?.speedKmh?.toInt() else null,
                             coolantC = null, rpmHz = if (alive) can.live.hz.toFloat() else null,
@@ -191,6 +193,7 @@ class ObdController(private val context: Context) {
 
     private fun stopCurrent() = synchronized(lock) {
         experimentConsent = false
+        hudReception.reset()
         liveSession?.stop()
         liveSession = null
         diagnosticRequested = false
@@ -403,7 +406,7 @@ class ObdController(private val context: Context) {
                 }
                 error("unreachable")
             }
-            for (init in listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0")) {
+            for (init in ObdInitialization.commands) {
                 val raw = validated(init, if (init == "ATZ") 6000 else 3000) {
                     if (init == "ATZ") it.contains("ELM327", ignoreCase = true)
                     else ObdParser.adapterOk(it, init)
@@ -459,14 +462,11 @@ class ObdController(private val context: Context) {
                     .record(AdapterDiagnostics.classify("ATDPN", dpn + ">"))) }
                 sessionLog(id, "ATDP → ${brief(dp)} / ATDPN → ${brief(dpn)}")
                 check(CommunicationHealth.protocol6(dp, dpn)) { "11bit/500kbpsを確認できず中止（ATSP6未適用）: ${brief(dp)} / ${brief(dpn)}" }
-                for (setting in listOf("ATSP6", "ATE0", "ATL0", "ATS0", "ATH1", "ATD1")) {
-                    val raw = command(setting, 3000)
-                    if (setting in AdapterDiagnostics.commands) publish(id) {
-                        it.copy(diagnostic = it.diagnostic.record(AdapterDiagnostics.classify(setting, raw + ">")))
-                    }
-                    sessionLog(id, "$setting → ${brief(raw)}")
-                    check(ObdParser.adapterOk(raw, setting)) { "$setting 未対応／失敗: ${brief(raw)}" }
-                }
+                CanMonitorSetup.apply(state.value.diagnostic.ecuVerified,
+                    exchange = { command(it, 3000) }, record = { result ->
+                        publish(id) { it.copy(diagnostic = it.diagnostic.record(result)) }
+                        sessionLog(id, "${result.command} → ${result.kind} RAW=${brief(result.raw)}")
+                    }, partialResponse = { partialReply })
                 check(CommunicationHealth.protocol6(command("ATDP", 3000), command("ATDPN", 3000))) { "ATSP6後のプロトコル不一致" }
                 val silent = diagnose("ATCSM1")
                 check(silent.kind in listOf(ResponseKind.OK, ResponseKind.UNSUPPORTED)) { "ATCSM1通信異常: ${silent.kind}" }
@@ -482,6 +482,7 @@ class ObdController(private val context: Context) {
                 monitorFailure = null
                 stoppingMonitor = false
                 canBenchmarks.connected(SystemClock.elapsedRealtimeNanos())
+                hudReception.reset()
                 monitoring = true
                 publish(id) { it.copy(connected = false, rpm = null, speedKmh = null, coolantC = null,
                     appliedMode = null, appliedTiming = null, status = "CAN受信待ち") }
@@ -635,13 +636,17 @@ class ObdController(private val context: Context) {
                     val char = (bytes[i].toInt() and 0xFF).toChar()
                     if (char == '>') {
                         if (monitoring && !stoppingMonitor && !manualStop && state.value.communication == CommunicationMode.CAN) {
-                            MonitorLine.error(text.toString(), false)?.let {
+                            val promptRaw = text.toString()
+                            canBenchmarks.rawRow(SystemClock.elapsedRealtimeNanos(), promptRaw, null)
+                            sessionLog(id, "CAN終端 RAW=$promptRaw >")
+                            MonitorLine.error(promptRaw, false)?.let {
                                 if (monitorFailure == null) canBenchmarks.error(SystemClock.elapsedRealtimeNanos())
                                 monitorFailure = it
                                 canBenchmarks.experimentInfo = canBenchmarks.experimentInfo.copy(atma = it)
                             }
                             if (monitorFailure == null) monitorFailure = "ATMA終了: ${brief(text.toString())}"
                             if (monitorFailure?.startsWith("ATMA終了") == true) canBenchmarks.error(SystemClock.elapsedRealtimeNanos())
+                            publish(id) { it.copy(communicationError = monitorFailure) }
                         }
                         replies.send(Reply(text.toString(), SystemClock.elapsedRealtimeNanos()))
                         text.setLength(0)
@@ -653,6 +658,8 @@ class ObdController(private val context: Context) {
                             val failure = MonitorLine.error(line, stoppingMonitor)
                             if (failure != null) {
                                 canBenchmarks.rawRow(now, line, null)
+                                sessionLog(id, "CAN異常 RAW=$line / $failure")
+                                publish(id) { it.copy(communicationError = failure) }
                                 if (monitorFailure == null) canBenchmarks.error(now)
                                 monitorFailure = failure
                                 canBenchmarks.experimentInfo = canBenchmarks.experimentInfo.copy(atma = failure)
@@ -660,10 +667,11 @@ class ObdController(private val context: Context) {
                                 val frame = CanFrameParser.parse(line, now)
                                 synchronized(lock) { if (id == session) {
                                     canBenchmarks.rawRow(now, line, frame)
-                                    if (frame != null && frame.id == 0x201) {
+                                    if (frame != null && Rx8CanDecoder().decode(frame) != null) {
                                         canBenchmarks.record(frame)
                                         val values = Rx8CanDecoder().decode(frame)
-                                        publish(id) { it.copy(can = it.can.copy(latest = frame, values = values)) }
+                                        publish(id) { it.copy(can = it.can.copy(latest = frame, values = values),
+                                            hudDisplayStale = hudReception.received(now)) }
                                     }
                                     else canBenchmarks.invalid(now)
                                 } }
@@ -672,13 +680,14 @@ class ObdController(private val context: Context) {
                     } else {
                         if (text.length >= 8192) throw IOException("ELM327応答が長すぎます")
                         text.append(char)
-                        if (state.value.diagnostic.running) partialReply = text.toString()
+                        if (!monitoring) partialReply = text.toString()
                     }
                 }
             }
         } catch (e: Exception) {
             if (monitoring && id == session && e !is CancellationException) {
                 monitorFailure = "CAN受信失敗: ${e.message}"
+                publish(id) { it.copy(communicationError = monitorFailure, bluetoothConnected = false) }
                 canBenchmarks.error(SystemClock.elapsedRealtimeNanos())
             }
             replies.close(e)

@@ -43,8 +43,8 @@ class HudStateTest {
     }
     @Test fun freshnessBoundaryAndStaleRetention() {
         assertEquals(HudStatus.LIVE, live().toHudState(3_999_999_999).status)
-        assertEquals(HudStatus.STALE, live().toHudState(4_000_000_000).status)
-        val stale = live().toHudState(4_000_000_001)
+        assertEquals(HudStatus.LIVE, live().toHudState(4_000_000_000).status)
+        val stale = live().toHudState(5_000_000_000)
         assertEquals(HudStatus.STALE, stale.status)
         assertNotNull(stale.values)
         assertEquals(HudStatus.STALE, live().toHudState(0).status)
